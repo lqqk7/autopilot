@@ -7,14 +7,25 @@ from autopilot.pipeline.context import Phase
 MIN_DOC_CHARS = 200
 
 REQUIRED_DOCS = [
-    "PRD.md",
-    "tech-stack.md",
-    "architecture.md",
-    "data-model.md",
-    "api-design.md",
-    "frontend-spec.md",
-    "backend-spec.md",
-    "test-cases.md",
+    # 00-overview
+    "00-overview/project-overview.md",
+    # 01-requirements
+    "01-requirements/PRD.md",
+    # 03-design
+    "03-design/architecture.md",
+    "03-design/data-model.md",
+    # 04-development
+    "04-development/tech-stack.md",
+    "04-development/backend-spec.md",
+    "04-development/frontend-spec.md",
+    # 05-testing
+    "05-testing/test-cases.md",
+    # 06-api
+    "06-api/api-design.md",
+    # 09-product
+    "09-product/product-overview.md",
+    "09-product/quick-start.md",
+    "09-product/user-manual.md",
 ]
 
 TRANSITIONS: dict[tuple[Phase, bool], Phase] = {

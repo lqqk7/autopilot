@@ -10,7 +10,22 @@ from autopilot.pipeline.context import Phase, PipelineState
 def init_project(project_path: Path, backend: str) -> None:
     autopilot_dir = project_path / ".autopilot"
 
-    for subdir in ["requirements", "docs", "knowledge/bugs", "knowledge/decisions"]:
+    for subdir in [
+        "requirements",
+        "docs/00-overview",
+        "docs/01-requirements",
+        "docs/02-research",
+        "docs/03-design",
+        "docs/04-development",
+        "docs/05-testing",
+        "docs/06-api",
+        "docs/07-deployment",
+        "docs/08-operations",
+        "docs/09-product",
+        "docs/archive",
+        "knowledge/bugs",
+        "knowledge/decisions",
+    ]:
         (autopilot_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     config_path = autopilot_dir / "config.toml"

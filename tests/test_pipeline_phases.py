@@ -45,11 +45,16 @@ def test_next_phase_from_review_fail():
 
 
 def test_exit_condition_doc_gen(tmp_path: Path):
+    from autopilot.pipeline.phases import REQUIRED_DOCS
+
     docs = tmp_path / "docs"
     docs.mkdir()
     condition = ExitCondition()
     assert not condition.doc_gen_complete(docs)
-    for name in ["PRD.md", "tech-stack.md", "architecture.md", "data-model.md",
-                 "api-design.md", "frontend-spec.md", "backend-spec.md", "test-cases.md"]:
-        (docs / name).write_text("x" * 200)
+
+    for rel in REQUIRED_DOCS:
+        path = docs / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * 200)
+
     assert condition.doc_gen_complete(docs)
