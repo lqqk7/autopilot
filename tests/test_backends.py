@@ -18,9 +18,10 @@ def ctx(tmp_path: Path) -> RunContext:
     )
 
 
-def _make_mock_process(stdout: str, returncode: int = 0):
+def _make_mock_process(stdout: str, returncode: int = 0, stderr: str = ""):
     mock = MagicMock()
     mock.stdout = stdout
+    mock.stderr = stderr
     mock.returncode = returncode
     return mock
 
