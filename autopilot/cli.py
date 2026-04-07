@@ -9,10 +9,17 @@ def main() -> None:
 
 
 @main.command()
-@click.option("--backend", type=click.Choice(["claude", "codex", "opencode"]), default="claude")
+@click.option("--backend", type=click.Choice(["claude", "codex", "opencode"]), default="claude", show_default=True)
 def init(backend: str) -> None:
     """Initialize autopilot in the current project."""
-    click.echo(f"Initializing with backend: {backend}")
+    from pathlib import Path
+    from autopilot.init_project import init_project
+
+    project_path = Path.cwd()
+    init_project(project_path=project_path, backend=backend)
+    click.echo(f"✓ Initialized .autopilot/ in {project_path}")
+    click.echo(f"  Backend: {backend}")
+    click.echo(f"  Next: add your requirements to .autopilot/input/ then run `ap run`")
 
 
 @main.command()

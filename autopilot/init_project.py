@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import toml
+
+from autopilot.pipeline.context import Phase, PipelineState
+
+
+def init_project(project_path: Path, backend: str) -> None:
+    autopilot_dir = project_path / ".autopilot"
+
+    for subdir in ["input", "docs", "knowledge/bugs", "knowledge/decisions"]:
+        (autopilot_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    config_path = autopilot_dir / "config.toml"
+    if not config_path.exists():
+        config = {"autopilot": {"backend": backend}}
+        config_path.write_text(toml.dumps(config), encoding="utf-8")
+
+    state_path = autopilot_dir / "state.json"
+    if not state_path.exists():
+        PipelineState(phase=Phase.INIT).save(state_path)
+
+    (project_path / "logs").mkdir(exist_ok=True)
+
+    input_readme = autopilot_dir / "input" / "README.md"
+    if not input_readme.exists():
+        input_readme.write_text(
+            "# Input\n\n在此目录放置你的需求描述文件（任意格式均可）。\n"
+            "建议至少包含：功能描述、目标用户、技术偏好。\n",
+            encoding="utf-8",
+        )
