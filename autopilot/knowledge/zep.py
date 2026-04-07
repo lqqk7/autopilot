@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
+
+logger = logging.getLogger(__name__)
 
 ZEP_BASE = "https://api.getzep.com/api/v2"
 
@@ -12,19 +16,28 @@ class ZepKnowledge:
         self._headers = {"Authorization": f"Api-Key {api_key}", "Content-Type": "application/json"}
 
     def write(self, content: str) -> None:
-        httpx.post(
-            f"{ZEP_BASE}/graph/{self.graph_id}/memory",
-            headers=self._headers,
-            json={"content": content},
-            timeout=30,
-        )
+        try:
+            resp = httpx.post(
+                f"{ZEP_BASE}/graph/{self.graph_id}/memory",
+                headers=self._headers,
+                json={"content": content},
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning("Zep write failed: %s", e)
 
     def recall(self, query: str, limit: int = 5) -> str:
-        resp = httpx.post(
-            f"{ZEP_BASE}/graph/{self.graph_id}/search",
-            headers=self._headers,
-            json={"query": query, "limit": limit},
-            timeout=30,
-        )
-        results = resp.json().get("results", [])
-        return "\n".join(r["content"] for r in results)
+        try:
+            resp = httpx.post(
+                f"{ZEP_BASE}/graph/{self.graph_id}/search",
+                headers=self._headers,
+                json={"query": query, "limit": limit},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            return "\n".join(r["content"] for r in results)
+        except Exception as e:
+            logger.warning("Zep recall failed: %s", e)
+            return ""
