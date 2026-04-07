@@ -44,6 +44,9 @@ class PipelineEngine:
         self._knowledge_count: int = 0
         self._compaction_count: int = 0
         self._backend_name: str = type(backend).__name__.lower().replace("backend", "")
+        self._fallback_backends: list[BackendBase] = self._load_fallback_backends()
+        self._fallback_index: int = -1   # -1 = primary, 0+ = fallback
+        self._backend_switches: int = 0
 
     def state_path(self) -> Path:
         return self.autopilot_dir / "state.json"
@@ -65,6 +68,34 @@ class PipelineEngine:
             fl_path = self.autopilot_dir / "feature_list.json"
             return Phase.DEV_LOOP if self.exit_condition.planning_complete(fl_path) else Phase.PLANNING
         return self.phase_runner.next_phase(state.phase, passed=True)
+
+    def _load_fallback_backends(self) -> list[BackendBase]:
+        config_path = self.autopilot_dir / "config.toml"
+        if not config_path.exists():
+            return []
+        try:
+            import toml
+            from autopilot.backends import get_backend
+            config = toml.loads(config_path.read_text())
+            names = config.get("autopilot", {}).get("fallback_backends", [])
+            return [get_backend(n) for n in names if n]
+        except Exception:
+            return []
+
+    def _try_switch_backend(self, error_type: ErrorType) -> bool:
+        """Switch to next fallback backend. Returns True if switched."""
+        next_idx = self._fallback_index + 1
+        if next_idx >= len(self._fallback_backends):
+            return False
+        old_name = self._backend_name
+        self.backend = self._fallback_backends[next_idx]
+        self._fallback_index = next_idx
+        self._backend_name = type(self.backend).__name__.lower().replace("backend", "")
+        self._backend_switches += 1
+        logger.warning("Backend switch: %s → %s (reason: %s)", old_name, self._backend_name, error_type)
+        if self.notifier:
+            self.notifier.send_backend_switch(old_name, self._backend_name, error_type.value)
+        return True
 
     def check_pause(self, state: PipelineState) -> bool:
         """Return True if the pipeline should pause for human intervention."""
@@ -145,6 +176,12 @@ class PipelineEngine:
                 local_retry = 0
                 continue
 
+            # v0.4: fallback backend on rate_limit / quota_exhausted
+            if result.error_type in (ErrorType.rate_limit, ErrorType.quota_exhausted):
+                if self._try_switch_backend(result.error_type):
+                    local_retry = 0
+                    continue
+
             state.phase_retries += 1
             if result.error_type == ErrorType.timeout and self.notifier:
                 self.notifier.send_timeout(phase=state.phase.value, retry=state.phase_retries)
@@ -193,7 +230,7 @@ class PipelineEngine:
             artifacts=self._collected_artifacts,
             pause_reason=state.pause_reason,
             backend_used=self._backend_name,
-            backend_switches=0,
+            backend_switches=self._backend_switches,
             knowledge_count=self._knowledge_count,
             compactions=self._compaction_count,
         )
@@ -211,6 +248,9 @@ class PipelineEngine:
         )
         self._run_start = time.monotonic()
         self._collected_artifacts = []
+        self._compaction_count = 0
+        self._backend_switches = 0
+        self._fallback_index = -1
         self._compaction_count = 0
         state = self.load_state()
         logger.info("Starting pipeline at phase: %s", state.phase)

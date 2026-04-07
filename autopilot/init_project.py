@@ -15,7 +15,7 @@ def init_project(project_path: Path, backend: str) -> None:
 
     config_path = autopilot_dir / "config.toml"
     if not config_path.exists():
-        config = {"autopilot": {"backend": backend}}
+        config = {"autopilot": {"backend": backend, "fallback_backends": []}}
         config_path.write_text(toml.dumps(config), encoding="utf-8")
 
     state_path = autopilot_dir / "state.json"

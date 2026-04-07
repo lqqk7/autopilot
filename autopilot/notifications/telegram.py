@@ -36,3 +36,6 @@ class TelegramNotifier:
 
     def send_timeout(self, phase: str, retries: int) -> None:
         self._send(f"⚠️ *Timeout*\n\nPhase: `{phase}` — retry {retries}")
+
+    def send_backend_switch(self, from_backend: str, to_backend: str, reason: str) -> None:
+        self._send(f"🔄 *Backend Switch*\n\n`{from_backend}` → `{to_backend}`\nReason: {reason}")
