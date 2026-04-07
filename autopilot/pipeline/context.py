@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import json
+import re
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class Phase(str, Enum):
+    INIT = "INIT"
+    DOC_GEN = "DOC_GEN"
+    PLANNING = "PLANNING"
+    DEV_LOOP = "DEV_LOOP"
+    CODE = "CODE"
+    TEST = "TEST"
+    REVIEW = "REVIEW"
+    FIX = "FIX"
+    DOC_UPDATE = "DOC_UPDATE"
+    KNOWLEDGE = "KNOWLEDGE"
+    DONE = "DONE"
+    HUMAN_PAUSE = "HUMAN_PAUSE"
+
+
+class Feature(BaseModel):
+    id: str
+    title: str
+    phase: str
+    depends_on: list[str] = Field(default_factory=list)
+    status: str = "pending"
+    test_file: str | None = None
+    fix_retries: int = 0
+
+
+class FeatureList(BaseModel):
+    features: list[Feature]
+
+    def save(self, path: Path) -> None:
+        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "FeatureList":
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def pending(self) -> list[Feature]:
+        return [f for f in self.features if f.status == "pending"]
+
+    def all_done(self) -> bool:
+        return all(f.status == "completed" for f in self.features)
+
+
+class PipelineState(BaseModel):
+    phase: Phase = Phase.INIT
+    current_feature_id: str | None = None
+    phase_retries: int = 0
+    pause_reason: str | None = None
+
+    def save(self, path: Path) -> None:
+        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "PipelineState":
+        if not path.exists():
+            return cls()
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+class AgentOutput(BaseModel):
+    status: str                          # "success" | "failure" | "partial"
+    summary: str
+    artifacts: list[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    next_hint: str | None = None
+
+    @classmethod
+    def parse(cls, raw: str) -> "AgentOutput":
+        pattern = r"```json autopilot-result\s*\n(.*?)\n```"
+        match = re.search(pattern, raw, re.DOTALL)
+        if not match:
+            raise ValueError(
+                "autopilot-result JSON block not found in agent output. "
+                f"Raw output (first 500 chars): {raw[:500]}"
+            )
+        return cls.model_validate_json(match.group(1))
