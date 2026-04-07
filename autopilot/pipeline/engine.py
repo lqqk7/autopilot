@@ -49,8 +49,59 @@ class PipelineEngine:
             return True
         return False
 
+    def run_phase(self, state: PipelineState) -> bool:
+        """Execute the current phase via the backend. Returns True if phase exit condition is met."""
+        from autopilot.agents.loader import AgentLoader
+        from autopilot.knowledge.local import LocalKnowledge
+
+        kb = LocalKnowledge(self.autopilot_dir / "knowledge")
+        loader = AgentLoader()
+
+        feature = None
+        if state.current_feature_id:
+            fl = FeatureList.load(self.autopilot_dir / "feature_list.json")
+            feature = next((f for f in fl.features if f.id == state.current_feature_id), None)
+
+        ctx = RunContext(
+            project_path=self.project_path,
+            docs_path=self.autopilot_dir / "docs",
+            feature=feature,
+            knowledge_md=kb.read_all(),
+        )
+
+        phase_to_agent: dict[Phase, str] = {
+            Phase.DOC_GEN: "doc_gen",
+            Phase.PLANNING: "planner",
+            Phase.CODE: "coder",
+            Phase.TEST: "tester",
+            Phase.REVIEW: "reviewer",
+            Phase.FIX: "fixer",
+            Phase.DOC_UPDATE: "doc_gen",
+            Phase.KNOWLEDGE: "doc_gen",
+        }
+
+        agent_name = phase_to_agent.get(state.phase)
+        if not agent_name:
+            return True
+
+        prompt = loader.build_system_prompt(agent_name, ctx)
+        result = self.backend.run(agent_name, prompt, ctx)
+
+        if not result.success:
+            state.phase_retries += 1
+            return False
+
+        try:
+            AgentOutput.parse(result.output)
+            state.phase_retries = 0
+            return True
+        except ValueError:
+            state.phase_retries += 1
+            return False
+
     def run(self) -> None:
         """Main pipeline loop."""
+        import time
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s [%(levelname)s] %(message)s",
@@ -61,18 +112,54 @@ class PipelineEngine:
         )
         state = self.load_state()
         logger.info("Starting pipeline at phase: %s", state.phase)
+        start_time = time.monotonic()
 
         while state.phase not in (Phase.DONE, Phase.HUMAN_PAUSE):
             if self.check_pause(state):
                 state.phase = Phase.HUMAN_PAUSE
-                state.pause_reason = f"Max retries ({MAX_FIX_RETRIES}) exceeded at {state.phase}"
+                state.pause_reason = f"Max retries exceeded at {state.phase.value}"
                 self.save_state(state)
                 logger.warning("HUMAN_PAUSE: %s", state.pause_reason)
                 break
 
-            next_phase = self.advance(state)
-            state.phase = next_phase
-            self.save_state(state)
-            logger.info("→ Phase: %s", state.phase)
+            if state.phase == Phase.DEV_LOOP:
+                fl_path = self.autopilot_dir / "feature_list.json"
+                if not fl_path.exists():
+                    state.phase = Phase.HUMAN_PAUSE
+                    state.pause_reason = "feature_list.json not found"
+                    self.save_state(state)
+                    break
 
-        logger.info("Pipeline ended at: %s", state.phase)
+                fl = FeatureList.load(fl_path)
+                ordered = topological_sort(fl.pending())
+
+                if not ordered:
+                    state.phase = Phase.DOC_UPDATE
+                    self.save_state(state)
+                    continue
+
+                state.current_feature_id = ordered[0].id
+                state.phase = Phase.CODE
+                self.save_state(state)
+                continue
+
+            passed = self.run_phase(state)
+
+            if passed:
+                next_phase = self.advance(state)
+                state.phase = next_phase
+                state.phase_retries = 0
+
+                if next_phase == Phase.DEV_LOOP and state.current_feature_id:
+                    fl = FeatureList.load(self.autopilot_dir / "feature_list.json")
+                    for f in fl.features:
+                        if f.id == state.current_feature_id:
+                            f.status = "completed"
+                    fl.save(self.autopilot_dir / "feature_list.json")
+                    state.current_feature_id = None
+
+            self.save_state(state)
+            logger.info("Phase: %s | retries: %d", state.phase, state.phase_retries)
+
+        elapsed = time.monotonic() - start_time
+        logger.info("Pipeline ended: %s (%.0fs)", state.phase, elapsed)
