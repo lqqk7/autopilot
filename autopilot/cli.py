@@ -114,11 +114,38 @@ def knowledge() -> None:
 @knowledge.command(name="list")
 def knowledge_list() -> None:
     """List knowledge entries."""
-    click.echo("Knowledge entries...")
+    from pathlib import Path
+    kb_dir = Path.cwd() / ".autopilot" / "knowledge"
+    if not kb_dir.exists():
+        click.echo("No knowledge base found.")
+        return
+    for md in sorted(kb_dir.rglob("*.md")):
+        click.echo(f"  {md.relative_to(kb_dir)}")
 
 
 @knowledge.command(name="search")
 @click.argument("query")
 def knowledge_search(query: str) -> None:
-    """Search knowledge base."""
-    click.echo(f"Searching: {query}")
+    """Search knowledge base (local + Zep)."""
+    import os
+    from pathlib import Path
+    from autopilot.knowledge.local import LocalKnowledge
+    from autopilot.knowledge.zep import ZepKnowledge
+
+    kb = LocalKnowledge(Path.cwd() / ".autopilot" / "knowledge")
+    local_content = kb.read_all()
+
+    matches = [line for line in local_content.splitlines() if query.lower() in line.lower()]
+    if matches:
+        click.echo("=== 本地结果 ===")
+        for m in matches[:10]:
+            click.echo(f"  {m}")
+
+    api_key = os.environ.get("AUTOPILOT_ZEP_API_KEY", "")
+    if api_key:
+        project_name = Path.cwd().name
+        zep = ZepKnowledge(api_key=api_key, graph_id=f"project.{project_name}.shared")
+        zep_result = zep.recall(query)
+        if zep_result:
+            click.echo("\n=== Zep 结果 ===")
+            click.echo(zep_result)
