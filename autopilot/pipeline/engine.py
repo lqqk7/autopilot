@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from autopilot.backends.base import BackendBase, RunContext
+from autopilot.notifications.telegram import TelegramNotifier
 from autopilot.pipeline.context import AgentOutput, Feature, FeatureList, Phase, PipelineState
 from autopilot.pipeline.phases import ExitCondition, PhaseRunner
 from autopilot.utils.toposort import topological_sort
@@ -21,6 +23,9 @@ class PipelineEngine:
         self.backend = backend
         self.phase_runner = PhaseRunner()
         self.exit_condition = ExitCondition()
+        token = os.environ.get("AUTOPILOT_TELEGRAM_TOKEN", "")
+        chat_id = os.environ.get("AUTOPILOT_TELEGRAM_CHAT_ID", "")
+        self.notifier = TelegramNotifier(token=token, chat_id=chat_id) if token else None
 
     def state_path(self) -> Path:
         return self.autopilot_dir / "state.json"
@@ -120,6 +125,8 @@ class PipelineEngine:
                 state.pause_reason = f"Max retries exceeded at {state.phase.value}"
                 self.save_state(state)
                 logger.warning("HUMAN_PAUSE: %s", state.pause_reason)
+                if self.notifier:
+                    self.notifier.send_pause(phase=state.phase.value, reason=state.pause_reason or "")
                 break
 
             if state.phase == Phase.DEV_LOOP:
@@ -156,10 +163,21 @@ class PipelineEngine:
                         if f.id == state.current_feature_id:
                             f.status = "completed"
                     fl.save(self.autopilot_dir / "feature_list.json")
+                    if self.notifier:
+                        fl_updated = FeatureList.load(self.autopilot_dir / "feature_list.json")
+                        done_count = sum(1 for feat in fl_updated.features if feat.status == "completed")
+                        self.notifier.send_feature_done(
+                            title=state.current_feature_id or "",
+                            elapsed=time.monotonic() - start_time,
+                            progress=(done_count, len(fl_updated.features)),
+                        )
                     state.current_feature_id = None
 
             self.save_state(state)
             logger.info("Phase: %s | retries: %d", state.phase, state.phase_retries)
 
         elapsed = time.monotonic() - start_time
+        if state.phase == Phase.DONE and self.notifier:
+            count = sum(1 for _ in (self.autopilot_dir / "knowledge").rglob("*.md"))
+            self.notifier.send_done(total_seconds=time.monotonic() - start_time, knowledge_count=count)
         logger.info("Pipeline ended: %s (%.0fs)", state.phase, elapsed)
