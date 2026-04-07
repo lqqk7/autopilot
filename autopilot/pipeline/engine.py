@@ -42,6 +42,7 @@ class PipelineEngine:
         self._run_start: float = 0.0
         self._collected_artifacts: list[str] = []
         self._knowledge_count: int = 0
+        self._compaction_count: int = 0
         self._backend_name: str = type(backend).__name__.lower().replace("backend", "")
 
     def state_path(self) -> Path:
@@ -76,9 +77,21 @@ class PipelineEngine:
     def _handle_error(self, result: BackendResult, retry_count: int) -> tuple[bool, float]:
         return handle_error(result, retry_count)
 
+    @staticmethod
+    def _rebuild_ctx(ctx: RunContext, knowledge_md: str) -> RunContext:
+        return RunContext(
+            project_path=ctx.project_path,
+            docs_path=ctx.docs_path,
+            feature=ctx.feature,
+            knowledge_md=knowledge_md,
+            answers_md=ctx.answers_md,
+            extra_files=ctx.extra_files,
+        )
+
     def run_phase(self, state: PipelineState) -> bool:
         """Execute the current phase via the backend. Returns True on success."""
         from autopilot.agents.loader import AgentLoader
+        from autopilot.knowledge.compactor import KnowledgeCompactor
         from autopilot.knowledge.local import LocalKnowledge
 
         kb = LocalKnowledge(self.autopilot_dir / "knowledge")
@@ -100,6 +113,11 @@ class PipelineEngine:
         if not agent_name:
             return True
 
+        compactor = KnowledgeCompactor()
+        if compactor.needs_compaction(ctx.knowledge_md):
+            ctx = self._rebuild_ctx(ctx, compactor.compact(ctx.knowledge_md, self.backend, self.autopilot_dir))
+            self._compaction_count += 1
+
         prompt = loader.build_system_prompt(agent_name, ctx)
         local_retry = 0
 
@@ -118,6 +136,13 @@ class PipelineEngine:
                 local_retry += 1
                 if wait > 0:
                     time.sleep(wait)
+                continue
+
+            if result.error_type == ErrorType.context_overflow:
+                ctx = self._rebuild_ctx(ctx, compactor.compact(ctx.knowledge_md, self.backend, self.autopilot_dir))
+                prompt = loader.build_system_prompt(agent_name, ctx)
+                self._compaction_count += 1
+                local_retry = 0
                 continue
 
             state.phase_retries += 1
@@ -170,7 +195,7 @@ class PipelineEngine:
             backend_used=self._backend_name,
             backend_switches=0,
             knowledge_count=self._knowledge_count,
-            compactions=0,
+            compactions=self._compaction_count,
         )
         result.save(self.autopilot_dir / "run_result.json")
 
@@ -186,6 +211,7 @@ class PipelineEngine:
         )
         self._run_start = time.monotonic()
         self._collected_artifacts = []
+        self._compaction_count = 0
         state = self.load_state()
         logger.info("Starting pipeline at phase: %s", state.phase)
         start_time = self._run_start

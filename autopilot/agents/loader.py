@@ -76,7 +76,12 @@ class AgentLoader:
                 f"## 当前任务\n**Feature ID:** {ctx.feature.id}\n**Title:** {ctx.feature.title}\n**Phase:** {ctx.feature.phase}"
             )
 
-        if ctx.knowledge_md:
+        summary_path = ctx.project_path / ".autopilot" / "knowledge" / "summary.md"
+        if summary_path.exists():
+            summary_content = summary_path.read_text(encoding="utf-8")
+            if summary_content:
+                injections.append(summary_content)
+        elif ctx.knowledge_md:
             injections.append(ctx.knowledge_md)
 
         answers_md = self._load_answers_md(ctx.project_path / ".autopilot")
