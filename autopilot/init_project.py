@@ -22,6 +22,10 @@ def init_project(project_path: Path, backend: str) -> None:
     if not state_path.exists():
         PipelineState(phase=Phase.INIT).save(state_path)
 
+    answers_path = autopilot_dir / "answers.json"
+    if not answers_path.exists():
+        answers_path.write_text("{}", encoding="utf-8")
+
     (project_path / "logs").mkdir(exist_ok=True)
 
     req_readme = autopilot_dir / "requirements" / "README.md"

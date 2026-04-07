@@ -78,11 +78,24 @@ def resume() -> None:
 def status() -> None:
     """Show current pipeline status."""
     from pathlib import Path
-    from autopilot.pipeline.context import PipelineState, FeatureList
+    from autopilot.pipeline.context import PipelineState, FeatureList, RunResult
 
     autopilot_dir = Path.cwd() / ".autopilot"
     if not autopilot_dir.exists():
         click.echo("Not initialized. Run `ap init` first.")
+        return
+
+    run_result_path = autopilot_dir / "run_result.json"
+    if run_result_path.exists():
+        rr = RunResult.load(run_result_path)
+        click.echo(f"状态: {rr.status}")
+        click.echo(f"Phase: {rr.phase}")
+        click.echo(f"耗时: {rr.elapsed_seconds}s")
+        click.echo(f"Features: {rr.features_done}/{rr.features_total}")
+        click.echo(f"知识条数: {rr.knowledge_count}")
+        click.echo(f"时间: {rr.timestamp}")
+        if rr.pause_reason:
+            click.echo(f"暂停原因: {rr.pause_reason}")
         return
 
     state = PipelineState.load(autopilot_dir / "state.json")

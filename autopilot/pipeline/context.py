@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -65,6 +67,35 @@ class PipelineState(BaseModel):
         if not path.exists():
             return cls()
         return cls.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+@dataclass
+class RunResult:
+    status: str                          # "done" | "paused" | "error"
+    phase: str
+    elapsed_seconds: float
+    features_total: int
+    features_done: int
+    artifacts: list[str] = field(default_factory=list)
+    pause_reason: str | None = None
+    backend_used: str = ""
+    backend_switches: int = 0
+    knowledge_count: int = 0
+    compactions: int = 0
+    timestamp: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.timestamp:
+            self.timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def save(self, path: Path) -> None:
+        import dataclasses
+        path.write_text(json.dumps(dataclasses.asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "RunResult":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return cls(**data)
 
 
 class AgentOutput(BaseModel):
