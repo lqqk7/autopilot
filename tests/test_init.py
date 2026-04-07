@@ -5,7 +5,7 @@ from autopilot.init_project import init_project
 
 def test_init_creates_directory_structure(tmp_path: Path):
     init_project(project_path=tmp_path, backend="claude")
-    assert (tmp_path / ".autopilot" / "input").exists()
+    assert (tmp_path / ".autopilot" / "requirements").exists()
     assert (tmp_path / ".autopilot" / "docs").exists()
     assert (tmp_path / ".autopilot" / "knowledge" / "bugs").exists()
     assert (tmp_path / ".autopilot" / "knowledge" / "decisions").exists()

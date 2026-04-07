@@ -19,7 +19,7 @@ def init(backend: str) -> None:
     init_project(project_path=project_path, backend=backend)
     click.echo(f"✓ Initialized .autopilot/ in {project_path}")
     click.echo(f"  Backend: {backend}")
-    click.echo(f"  Next: add your requirements to .autopilot/input/ then run `ap run`")
+    click.echo(f"  Next: add your requirements to .autopilot/requirements/ then run `ap run`")
 
 
 @main.command()

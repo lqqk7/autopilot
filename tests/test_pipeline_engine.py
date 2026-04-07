@@ -9,7 +9,7 @@ from autopilot.backends.base import BackendResult, RunContext
 @pytest.fixture
 def engine(tmp_path: Path) -> PipelineEngine:
     autopilot_dir = tmp_path / ".autopilot"
-    (autopilot_dir / "input").mkdir(parents=True)
+    (autopilot_dir / "requirements").mkdir(parents=True)
     (autopilot_dir / "docs").mkdir()
     (autopilot_dir / "knowledge" / "bugs").mkdir(parents=True)
     (autopilot_dir / "knowledge" / "decisions").mkdir()
@@ -28,8 +28,8 @@ def test_engine_initial_state(engine: PipelineEngine):
 
 
 def test_engine_transitions_to_doc_gen(engine: PipelineEngine, tmp_path: Path):
-    # Seed input
-    (tmp_path / ".autopilot" / "input" / "requirements.md").write_text("Build a todo app")
+    # Seed requirements
+    (tmp_path / ".autopilot" / "requirements" / "requirements.md").write_text("Build a todo app")
     state = engine.load_state()
     state.phase = Phase.INIT
     engine.save_state(state)

@@ -10,7 +10,7 @@ from autopilot.pipeline.context import Phase, PipelineState
 def init_project(project_path: Path, backend: str) -> None:
     autopilot_dir = project_path / ".autopilot"
 
-    for subdir in ["input", "docs", "knowledge/bugs", "knowledge/decisions"]:
+    for subdir in ["requirements", "docs", "knowledge/bugs", "knowledge/decisions"]:
         (autopilot_dir / subdir).mkdir(parents=True, exist_ok=True)
 
     config_path = autopilot_dir / "config.toml"
@@ -24,10 +24,10 @@ def init_project(project_path: Path, backend: str) -> None:
 
     (project_path / "logs").mkdir(exist_ok=True)
 
-    input_readme = autopilot_dir / "input" / "README.md"
-    if not input_readme.exists():
-        input_readme.write_text(
-            "# Input\n\n在此目录放置你的需求描述文件（任意格式均可）。\n"
+    req_readme = autopilot_dir / "requirements" / "README.md"
+    if not req_readme.exists():
+        req_readme.write_text(
+            "# Requirements\n\n在此目录放置你的需求描述文件（任意格式均可）。\n"
             "建议至少包含：功能描述、目标用户、技术偏好。\n",
             encoding="utf-8",
         )
