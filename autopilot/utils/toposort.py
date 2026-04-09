@@ -20,6 +20,8 @@ def topological_sort(features: list[Feature]) -> list[Feature]:
             return
         in_stack.add(fid)
         for dep_id in by_id[fid].depends_on:
+            if dep_id not in by_id:
+                continue  # dependency already completed, skip
             visit(dep_id)
         in_stack.discard(fid)
         visited.add(fid)
