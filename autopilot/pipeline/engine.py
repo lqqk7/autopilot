@@ -129,6 +129,8 @@ class PipelineEngine:
 
     def run_phase(self, state: PipelineState) -> bool:
         """Execute the current phase via the backend. Returns True on success."""
+        import sys
+
         from autopilot.agents.loader import AgentLoader
         from autopilot.knowledge.compactor import KnowledgeCompactor
         from autopilot.knowledge.local import LocalKnowledge
@@ -162,46 +164,58 @@ class PipelineEngine:
 
         phase_timeout = _PHASE_TIMEOUT.get(state.phase, _DEFAULT_TIMEOUT)
 
-        while True:
-            result = self.backend.run(agent_name, prompt, ctx, timeout=phase_timeout)
+        # Live progress — only in interactive terminals, not in tests/pipes
+        progress = None
+        if sys.stdout.isatty():
+            from autopilot.ui.progress import PhaseProgress
+            docs_path = ctx.docs_path if state.phase == Phase.DOC_GEN else None
+            progress = PhaseProgress(state.phase.value, docs_path=docs_path)
+            progress.start()
 
-            if result.success:
-                parsed = self._try_parse_output(result, state, local_retry)
-                if parsed is None:
+        try:
+            while True:
+                result = self.backend.run(agent_name, prompt, ctx, timeout=phase_timeout)
+
+                if result.success:
+                    parsed = self._try_parse_output(result, state, local_retry)
+                    if parsed is None:
+                        local_retry += 1
+                        continue
+                    return parsed
+
+                should_retry, wait = handle_error(result, local_retry)
+                if should_retry and result.error_type in LOCAL_RETRY_TYPES:
                     local_retry += 1
-                    continue  # parse error local retry
-                return parsed
+                    if wait > 0:
+                        time.sleep(wait)
+                    continue
 
-            should_retry, wait = handle_error(result, local_retry)
-            if should_retry and result.error_type in LOCAL_RETRY_TYPES:
-                local_retry += 1
-                if wait > 0:
-                    time.sleep(wait)
-                continue
-
-            if result.error_type == ErrorType.context_overflow:
-                ctx = self._rebuild_ctx(ctx, compactor.compact(ctx.knowledge_md, self.backend, self.autopilot_dir))
-                prompt = loader.build_system_prompt(agent_name, ctx)
-                self._compaction_count += 1
-                local_retry = 0
-                continue
-
-            # v0.4: fallback backend on rate_limit / quota_exhausted
-            if result.error_type in (ErrorType.rate_limit, ErrorType.quota_exhausted):
-                if self._try_switch_backend(result.error_type):
+                if result.error_type == ErrorType.context_overflow:
+                    ctx = self._rebuild_ctx(ctx, compactor.compact(ctx.knowledge_md, self.backend, self.autopilot_dir))
+                    prompt = loader.build_system_prompt(agent_name, ctx)
+                    self._compaction_count += 1
                     local_retry = 0
                     continue
 
-            # File-based fallback: if DOC_GEN files exist despite timeout/parse error, treat as success
-            if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(ctx.docs_path):
-                logger.info("DOC_GEN file-based fallback: all required docs present, treating as success")
-                state.phase_retries = 0
-                return True
+                # v0.4: fallback backend on rate_limit / quota_exhausted
+                if result.error_type in (ErrorType.rate_limit, ErrorType.quota_exhausted):
+                    if self._try_switch_backend(result.error_type):
+                        local_retry = 0
+                        continue
 
-            state.phase_retries += 1
-            if result.error_type == ErrorType.timeout and self.notifier:
-                self.notifier.send_timeout(phase=state.phase.value, retry=state.phase_retries)
-            return False
+                # File-based fallback for DOC_GEN: files exist despite timeout/parse error
+                if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(ctx.docs_path):
+                    logger.info("DOC_GEN file-based fallback: all required docs present")
+                    state.phase_retries = 0
+                    return True
+
+                state.phase_retries += 1
+                if result.error_type == ErrorType.timeout and self.notifier:
+                    self.notifier.send_timeout(phase=state.phase.value, retry=state.phase_retries)
+                return False
+        finally:
+            if progress:
+                progress.stop()
 
     def _try_parse_output(
         self, result: BackendResult, state: PipelineState, local_retry: int
