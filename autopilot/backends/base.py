@@ -61,15 +61,16 @@ class BackendBase(ABC):
             return ErrorType.server_error
         return ErrorType.unknown
 
-    def run(self, agent_name: str, prompt: str, ctx: RunContext) -> BackendResult:
+    def run(self, agent_name: str, prompt: str, ctx: RunContext, timeout: int | None = None) -> BackendResult:
         cmd = self._build_cmd(agent_name, prompt, ctx)
+        effective_timeout = timeout if timeout is not None else self.TIMEOUT_SECONDS
         start = time.monotonic()
         try:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.TIMEOUT_SECONDS,
+                timeout=effective_timeout,
                 cwd=ctx.project_path,
             )
             duration = time.monotonic() - start
@@ -89,7 +90,7 @@ class BackendBase(ABC):
                 success=False,
                 output="",
                 duration_seconds=duration,
-                error=f"timeout after {self.TIMEOUT_SECONDS}s",
+                error=f"timeout after {effective_timeout}s",
                 error_type=ErrorType.timeout,
             )
 

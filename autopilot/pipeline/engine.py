@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 MAX_FIX_RETRIES = 5
 MAX_PHASE_RETRIES = 3
 
+# Per-phase backend timeout (seconds). Heavy phases need more time.
+_PHASE_TIMEOUT: dict[Phase, int] = {
+    Phase.DOC_GEN: 900,      # 15 min: generates 12+ docs
+    Phase.DOC_UPDATE: 600,   # 10 min: updates multiple docs
+    Phase.PLANNING: 600,     # 10 min: feature decomposition can be complex
+}
+_DEFAULT_TIMEOUT = 300       # 5 min for CODE/TEST/REVIEW/FIX/KNOWLEDGE
+
 _PHASE_TO_AGENT: dict[Phase, str] = {
     Phase.DOC_GEN: "doc_gen",
     Phase.PLANNING: "planner",
@@ -152,8 +160,10 @@ class PipelineEngine:
         prompt = loader.build_system_prompt(agent_name, ctx)
         local_retry = 0
 
+        phase_timeout = _PHASE_TIMEOUT.get(state.phase, _DEFAULT_TIMEOUT)
+
         while True:
-            result = self.backend.run(agent_name, prompt, ctx)
+            result = self.backend.run(agent_name, prompt, ctx, timeout=phase_timeout)
 
             if result.success:
                 parsed = self._try_parse_output(result, state, local_retry)
@@ -182,6 +192,12 @@ class PipelineEngine:
                     local_retry = 0
                     continue
 
+            # File-based fallback: if DOC_GEN files exist despite timeout/parse error, treat as success
+            if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(ctx.docs_path):
+                logger.info("DOC_GEN file-based fallback: all required docs present, treating as success")
+                state.phase_retries = 0
+                return True
+
             state.phase_retries += 1
             if result.error_type == ErrorType.timeout and self.notifier:
                 self.notifier.send_timeout(phase=state.phase.value, retry=state.phase_retries)
@@ -207,6 +223,13 @@ class PipelineEngine:
             should_retry, _ = handle_error(fake, local_retry)
             if should_retry and local_retry < 3:
                 return None  # signal caller to increment local_retry and loop
+            # parse failed terminally — check file-based fallback for DOC_GEN
+            if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(
+                self.autopilot_dir / "docs"
+            ):
+                logger.info("DOC_GEN parse-error fallback: required docs present")
+                state.phase_retries = 0
+                return True
             state.phase_retries += 1
             return False
 
