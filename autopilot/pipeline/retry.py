@@ -34,7 +34,11 @@ def handle_error(result: BackendResult, retry_count: int) -> tuple[bool, float]:
         return False, 0.0
 
     if et == ErrorType.timeout:
-        return True, 0.0
+        # Allow 1 local retry (transient infra hiccup), then give up.
+        # Callers should set generous timeouts — repeated timeout = real failure.
+        if retry_count < 1:
+            return True, 0.0
+        return False, 0.0
 
     if et == ErrorType.parse_error:
         if retry_count < 3:
@@ -50,4 +54,5 @@ LOCAL_RETRY_TYPES: tuple[ErrorType, ...] = (
     ErrorType.rate_limit,
     ErrorType.server_error,
     ErrorType.parse_error,
+    ErrorType.timeout,
 )

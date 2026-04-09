@@ -23,8 +23,13 @@ _PHASE_TIMEOUT: dict[Phase, int] = {
     Phase.DOC_UPDATE: 600,   # 10 min: updates multiple docs
     Phase.PLANNING: 600,     # 10 min: feature decomposition can be complex
     Phase.DELIVERY: 600,     # 10 min: generates 3 delivery docs based on final product
+    Phase.CODE: 1800,        # 30 min: implementing a feature can take significant time
+    Phase.TEST: 900,         # 15 min: writing + running tests
+    Phase.FIX: 900,          # 15 min: fixing issues found in review/test
+    Phase.REVIEW: 600,       # 10 min: code review
+    Phase.KNOWLEDGE: 600,    # 10 min: knowledge base update
 }
-_DEFAULT_TIMEOUT = 300       # 5 min for CODE/TEST/REVIEW/FIX/KNOWLEDGE
+_DEFAULT_TIMEOUT = 300       # 5 min fallback (should not be hit by any real phase)
 
 _PHASE_TO_AGENT: dict[Phase, str] = {
     Phase.DOC_GEN: "doc_gen",
