@@ -6,6 +6,7 @@ from autopilot.pipeline.context import Phase
 
 MIN_DOC_CHARS = 200
 
+# Technical/design docs generated at project kickoff (DOC_GEN phase)
 REQUIRED_DOCS = [
     # 00-overview
     "00-overview/project-overview.md",
@@ -22,7 +23,10 @@ REQUIRED_DOCS = [
     "05-testing/test-cases.md",
     # 06-api
     "06-api/api-design.md",
-    # 09-product
+]
+
+# Delivery docs generated AFTER all development is complete (DELIVERY phase)
+DELIVERY_DOCS = [
     "09-product/product-overview.md",
     "09-product/quick-start.md",
     "09-product/user-manual.md",
@@ -40,7 +44,8 @@ TRANSITIONS: dict[tuple[Phase, bool], Phase] = {
     (Phase.FIX, True): Phase.CODE,
     (Phase.FIX, False): Phase.CODE,
     (Phase.DOC_UPDATE, True): Phase.KNOWLEDGE,
-    (Phase.KNOWLEDGE, True): Phase.DONE,
+    (Phase.KNOWLEDGE, True): Phase.DELIVERY,
+    (Phase.DELIVERY, True): Phase.DONE,
 }
 
 
@@ -53,12 +58,18 @@ class PhaseRunner:
 
 
 class ExitCondition:
-    def doc_gen_complete(self, docs_path: Path) -> bool:
-        for name in REQUIRED_DOCS:
+    def _all_docs_present(self, docs_path: Path, doc_list: list[str]) -> bool:
+        for name in doc_list:
             f = docs_path / name
             if not f.exists() or len(f.read_text(encoding="utf-8")) < MIN_DOC_CHARS:
                 return False
         return True
+
+    def doc_gen_complete(self, docs_path: Path) -> bool:
+        return self._all_docs_present(docs_path, REQUIRED_DOCS)
+
+    def delivery_complete(self, docs_path: Path) -> bool:
+        return self._all_docs_present(docs_path, DELIVERY_DOCS)
 
     def planning_complete(self, feature_list_path: Path) -> bool:
         if not feature_list_path.exists():

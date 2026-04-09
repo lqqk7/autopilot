@@ -22,6 +22,7 @@ class Phase(str, Enum):
     FIX = "FIX"
     DOC_UPDATE = "DOC_UPDATE"
     KNOWLEDGE = "KNOWLEDGE"
+    DELIVERY = "DELIVERY"
     DONE = "DONE"
     HUMAN_PAUSE = "HUMAN_PAUSE"
 

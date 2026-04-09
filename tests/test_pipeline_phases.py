@@ -58,3 +58,19 @@ def test_exit_condition_doc_gen(tmp_path: Path):
         path.write_text("x" * 200)
 
     assert condition.doc_gen_complete(docs)
+
+
+def test_exit_condition_delivery(tmp_path: Path):
+    from autopilot.pipeline.phases import DELIVERY_DOCS
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    condition = ExitCondition()
+    assert not condition.delivery_complete(docs)
+
+    for rel in DELIVERY_DOCS:
+        path = docs / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * 200)
+
+    assert condition.delivery_complete(docs)

@@ -8,7 +8,7 @@ from pathlib import Path
 from autopilot.backends.base import BackendBase, BackendResult, ErrorType, RunContext
 from autopilot.notifications.telegram import TelegramNotifier
 from autopilot.pipeline.context import AgentOutput, FeatureList, Phase, PipelineState, RunResult
-from autopilot.pipeline.phases import ExitCondition, PhaseRunner
+from autopilot.pipeline.phases import DELIVERY_DOCS, ExitCondition, PhaseRunner
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, exponential_backoff, handle_error
 from autopilot.utils.toposort import topological_sort
 
@@ -19,9 +19,10 @@ MAX_PHASE_RETRIES = 3
 
 # Per-phase backend timeout (seconds). Heavy phases need more time.
 _PHASE_TIMEOUT: dict[Phase, int] = {
-    Phase.DOC_GEN: 900,      # 15 min: generates 12+ docs
+    Phase.DOC_GEN: 600,      # 10 min: generates 9 technical/design docs
     Phase.DOC_UPDATE: 600,   # 10 min: updates multiple docs
     Phase.PLANNING: 600,     # 10 min: feature decomposition can be complex
+    Phase.DELIVERY: 600,     # 10 min: generates 3 delivery docs based on final product
 }
 _DEFAULT_TIMEOUT = 300       # 5 min for CODE/TEST/REVIEW/FIX/KNOWLEDGE
 
@@ -34,6 +35,7 @@ _PHASE_TO_AGENT: dict[Phase, str] = {
     Phase.FIX: "fixer",
     Phase.DOC_UPDATE: "doc_gen",
     Phase.KNOWLEDGE: "doc_gen",
+    Phase.DELIVERY: "doc_gen",
 }
 
 
@@ -75,6 +77,9 @@ class PipelineEngine:
         if state.phase == Phase.PLANNING:
             fl_path = self.autopilot_dir / "feature_list.json"
             return Phase.DEV_LOOP if self.exit_condition.planning_complete(fl_path) else Phase.PLANNING
+        if state.phase == Phase.DELIVERY:
+            docs = self.autopilot_dir / "docs"
+            return Phase.DONE if self.exit_condition.delivery_complete(docs) else Phase.DELIVERY
         return self.phase_runner.next_phase(state.phase, passed=True)
 
     def _load_fallback_backends(self) -> list[BackendBase]:
@@ -168,7 +173,7 @@ class PipelineEngine:
         progress = None
         if sys.stdout.isatty():
             from autopilot.ui.progress import PhaseProgress
-            docs_path = ctx.docs_path if state.phase == Phase.DOC_GEN else None
+            docs_path = ctx.docs_path if state.phase in (Phase.DOC_GEN, Phase.DELIVERY) else None
             progress = PhaseProgress(state.phase.value, docs_path=docs_path)
             progress.start()
 
@@ -203,9 +208,13 @@ class PipelineEngine:
                         local_retry = 0
                         continue
 
-                # File-based fallback for DOC_GEN: files exist despite timeout/parse error
+                # File-based fallback for DOC_GEN/DELIVERY: files exist despite timeout/parse error
                 if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(ctx.docs_path):
                     logger.info("DOC_GEN file-based fallback: all required docs present")
+                    state.phase_retries = 0
+                    return True
+                if state.phase == Phase.DELIVERY and self.exit_condition.delivery_complete(ctx.docs_path):
+                    logger.info("DELIVERY file-based fallback: all delivery docs present")
                     state.phase_retries = 0
                     return True
 
@@ -237,11 +246,14 @@ class PipelineEngine:
             should_retry, _ = handle_error(fake, local_retry)
             if should_retry and local_retry < 3:
                 return None  # signal caller to increment local_retry and loop
-            # parse failed terminally — check file-based fallback for DOC_GEN
-            if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(
-                self.autopilot_dir / "docs"
-            ):
+            # parse failed terminally — check file-based fallback for doc phases
+            docs_path = self.autopilot_dir / "docs"
+            if state.phase == Phase.DOC_GEN and self.exit_condition.doc_gen_complete(docs_path):
                 logger.info("DOC_GEN parse-error fallback: required docs present")
+                state.phase_retries = 0
+                return True
+            if state.phase == Phase.DELIVERY and self.exit_condition.delivery_complete(docs_path):
+                logger.info("DELIVERY parse-error fallback: delivery docs present")
                 state.phase_retries = 0
                 return True
             state.phase_retries += 1

@@ -14,20 +14,26 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from autopilot.pipeline.phases import MIN_DOC_CHARS, REQUIRED_DOCS
+from autopilot.pipeline.phases import DELIVERY_DOCS, MIN_DOC_CHARS, REQUIRED_DOCS
+
+_DOC_PHASE_LISTS: dict[str, list[str]] = {
+    "DOC_GEN": REQUIRED_DOCS,
+    "DELIVERY": DELIVERY_DOCS,
+}
 
 
 class PhaseProgress:
     """Renders live terminal progress while a pipeline phase runs in a subprocess.
 
-    DOC_GEN: shows a progress bar tracking how many required docs have been written.
+    DOC_GEN/DELIVERY: shows a progress bar tracking how many docs have been written.
     Other phases: shows a spinner with phase name and elapsed time.
     """
 
     def __init__(self, phase_name: str, docs_path: Path | None = None) -> None:
         self.phase_name = phase_name
         self.docs_path = docs_path
-        self._is_doc_gen = phase_name == "DOC_GEN" and docs_path is not None
+        self._doc_list = _DOC_PHASE_LISTS.get(phase_name) if docs_path else None
+        self._is_doc_gen = self._doc_list is not None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._console = Console(stderr=False)
@@ -50,7 +56,7 @@ class PhaseProgress:
             self._render_spinner()
 
     def _render_doc_gen(self) -> None:
-        total = len(REQUIRED_DOCS)
+        total = len(self._doc_list or [])
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[bold cyan]DOC_GEN"),
@@ -88,12 +94,12 @@ class PhaseProgress:
 
     def _scan_docs(self) -> tuple[int, str]:
         """Return (completed_count, latest_written_filename)."""
-        if not self.docs_path:
+        if not self.docs_path or not self._doc_list:
             return 0, ""
         done = 0
         latest_file = ""
         latest_mtime = 0.0
-        for rel in REQUIRED_DOCS:
+        for rel in self._doc_list:
             f = self.docs_path / rel
             if not f.exists():
                 continue
