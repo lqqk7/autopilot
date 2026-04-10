@@ -102,6 +102,9 @@ class RunResult:
         return cls(**data)
 
 
+_RESULT_PATTERN = re.compile(r"```json autopilot-result\s*\n(.*?)\n```", re.DOTALL)
+
+
 class AgentOutput(BaseModel):
     status: str                          # "success" | "failure" | "partial"
     summary: str
@@ -111,8 +114,7 @@ class AgentOutput(BaseModel):
 
     @classmethod
     def parse(cls, raw: str) -> "AgentOutput":
-        pattern = r"```json autopilot-result\s*\n(.*?)\n```"
-        match = re.search(pattern, raw, re.DOTALL)
+        match = _RESULT_PATTERN.search(raw)
         if not match:
             raise ValueError(
                 "autopilot-result JSON block not found in agent output. "

@@ -25,9 +25,8 @@ def init(backend: str) -> None:
 @main.command()
 @click.option("--backend", type=click.Choice(["claude", "codex", "opencode"]), default=None)
 @click.option("--model", default=None, help="Model override (if backend supports it)")
-@click.option("--phase", default=None, help="Run a specific phase only (debug)")
-@click.option("--feature", default=None, help="Run a specific feature only (debug)")
-def run(backend: str | None, model: str | None, phase: str | None, feature: str | None) -> None:
+@click.option("--log-level", type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), default=None)
+def run(backend: str | None, model: str | None, log_level: str | None) -> None:
     """Start the full pipeline."""
     from pathlib import Path
     import toml
@@ -41,19 +40,27 @@ def run(backend: str | None, model: str | None, phase: str | None, feature: str 
         click.echo("Error: .autopilot/ not found. Run `ap init` first.", err=True)
         raise SystemExit(1)
 
+    from autopilot.pipeline.config import PipelineConfig
+
     config = toml.loads((autopilot_dir / "config.toml").read_text())
     ap_cfg = config.get("autopilot", {})
     chosen_backend = backend or ap_cfg["backend"]
-    max_parallel = ap_cfg.get("max_parallel", 1)
+    max_parallel = ap_cfg.get("max_parallel", 2)
     parallel_backends_names: list[str] = ap_cfg.get("parallel_backends", [])
-    parallel_backends = [get_backend(n) for n in parallel_backends_names] if parallel_backends_names else []
+    effective_log_level = log_level or ap_cfg.get("log_level", "INFO")
+    pipeline_config = PipelineConfig.from_toml(ap_cfg, model_override=model or "")
 
-    click.echo(f"Backend: {chosen_backend}  parallel: {max(max_parallel, len(parallel_backends))}")
+    _dangerous = pipeline_config.allow_dangerous_permissions
+    parallel_backends = [get_backend(n, model=pipeline_config.model, allow_dangerous=_dangerous) for n in parallel_backends_names] if parallel_backends_names else []
+
+    click.echo(f"Backend: {chosen_backend}  parallel: {max(max_parallel, len(parallel_backends))}  log: {effective_log_level}")
     engine = PipelineEngine(
         project_path=project_path,
-        backend=get_backend(chosen_backend),
+        backend=get_backend(chosen_backend, model=pipeline_config.model, allow_dangerous=_dangerous),
         max_parallel=max_parallel,
         parallel_backends=parallel_backends,
+        log_level=effective_log_level,
+        pipeline_config=pipeline_config,
     )
     engine.run()
 
@@ -69,6 +76,11 @@ def resume() -> None:
 
     project_path = Path.cwd()
     autopilot_dir = project_path / ".autopilot"
+
+    if not autopilot_dir.exists():
+        click.echo("Error: .autopilot/ not found. Run `ap init` first.", err=True)
+        raise SystemExit(1)
+
     state = PipelineState.load(autopilot_dir / "state.json")
 
     if state.phase == Phase.HUMAN_PAUSE:
@@ -86,16 +98,24 @@ def resume() -> None:
         state.post_interview_phase = None
         state.save(autopilot_dir / "state.json")
 
+    from autopilot.pipeline.config import PipelineConfig
+
     config = toml.loads((autopilot_dir / "config.toml").read_text())
     ap_cfg = config.get("autopilot", {})
-    max_parallel = ap_cfg.get("max_parallel", 1)
+    max_parallel = ap_cfg.get("max_parallel", 2)
     parallel_backends_names: list[str] = ap_cfg.get("parallel_backends", [])
-    parallel_backends = [get_backend(n) for n in parallel_backends_names] if parallel_backends_names else []
+    effective_log_level = ap_cfg.get("log_level", "INFO")
+    pipeline_config = PipelineConfig.from_toml(ap_cfg)
+
+    _dangerous = pipeline_config.allow_dangerous_permissions
+    parallel_backends = [get_backend(n, model=pipeline_config.model, allow_dangerous=_dangerous) for n in parallel_backends_names] if parallel_backends_names else []
     engine = PipelineEngine(
         project_path=project_path,
-        backend=get_backend(ap_cfg["backend"]),
+        backend=get_backend(ap_cfg["backend"], model=pipeline_config.model, allow_dangerous=_dangerous),
         max_parallel=max_parallel,
         parallel_backends=parallel_backends,
+        log_level=effective_log_level,
+        pipeline_config=pipeline_config,
     )
     click.echo(f"Resuming from phase: {state.phase.value}")
     engine.run()
@@ -207,6 +227,16 @@ def add_feature(title_or_reqfile: str, phase: str, depends_on: str, test_file: s
     new_id = f"feat-{next_num:03d}"
 
     dep_list = [d.strip() for d in depends_on.split(",") if d.strip()]
+    if dep_list:
+        existing_ids = {f.id for f in fl.features}
+        missing = [d for d in dep_list if d not in existing_ids]
+        if missing:
+            click.echo(f"Error: unknown dependency IDs: {', '.join(missing)}", err=True)
+            raise SystemExit(1)
+        if new_id in dep_list:
+            click.echo(f"Error: feature cannot depend on itself", err=True)
+            raise SystemExit(1)
+
     new_feature = Feature(
         id=new_id,
         title=title_or_reqfile,
@@ -310,26 +340,16 @@ def knowledge_list() -> None:
 @knowledge.command(name="search")
 @click.argument("query")
 def knowledge_search(query: str) -> None:
-    """Search knowledge base (local + Zep)."""
-    import os
+    """Search local knowledge base."""
     from pathlib import Path
     from autopilot.knowledge.local import LocalKnowledge
-    from autopilot.knowledge.zep import ZepKnowledge
 
     kb = LocalKnowledge(Path.cwd() / ".autopilot" / "knowledge")
     local_content = kb.read_all()
 
     matches = [line for line in local_content.splitlines() if query.lower() in line.lower()]
     if matches:
-        click.echo("=== 本地结果 ===")
         for m in matches[:10]:
             click.echo(f"  {m}")
-
-    api_key = os.environ.get("AUTOPILOT_ZEP_API_KEY", "")
-    if api_key:
-        project_name = Path.cwd().name
-        zep = ZepKnowledge(api_key=api_key, graph_id=f"project.{project_name}.shared")
-        zep_result = zep.recall(query)
-        if zep_result:
-            click.echo("\n=== Zep 结果 ===")
-            click.echo(zep_result)
+    else:
+        click.echo("No matches found.")

@@ -8,12 +8,13 @@ class CodexBackend(BackendBase):
         return "codex"
 
     def _build_cmd(self, agent_name: str, prompt: str, ctx: RunContext) -> list[str]:
-        return [
-            "codex",
-            "--approval-mode", "full-auto",
-            "--system-prompt", agent_name,
-            prompt,
-        ]
+        cmd = ["codex", "exec"]
+        if self.allow_dangerous:
+            cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        if self.model:
+            cmd += ["-m", self.model]
+        cmd.append(prompt)
+        return cmd
 
     def _classify_error(self, returncode: int, stderr: str) -> ErrorType:
         text = stderr.lower()

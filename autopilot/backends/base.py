@@ -42,6 +42,10 @@ class BackendResult:
 class BackendBase(ABC):
     TIMEOUT_SECONDS: int = 300
 
+    def __init__(self, model: str = "", allow_dangerous: bool = True) -> None:
+        self.model = model              # empty = use the tool's own default
+        self.allow_dangerous = allow_dangerous
+
     @abstractmethod
     def _build_cmd(self, agent_name: str, prompt: str, ctx: RunContext) -> list[str]:
         """Build the subprocess command list."""
@@ -69,6 +73,7 @@ class BackendBase(ABC):
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=effective_timeout,
                 cwd=ctx.project_path,
@@ -92,6 +97,15 @@ class BackendBase(ABC):
                 duration_seconds=duration,
                 error=f"timeout after {effective_timeout}s",
                 error_type=ErrorType.timeout,
+            )
+        except OSError as exc:
+            duration = time.monotonic() - start
+            return BackendResult(
+                success=False,
+                output="",
+                duration_seconds=duration,
+                error=f"failed to launch backend ({cmd[0]}): {exc}",
+                error_type=ErrorType.unknown,
             )
 
     def is_available(self) -> bool:

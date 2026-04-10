@@ -8,11 +8,11 @@ class OpenCodeBackend(BackendBase):
         return "opencode"
 
     def _build_cmd(self, agent_name: str, prompt: str, ctx: RunContext) -> list[str]:
-        return [
-            "opencode", "run",
-            "--agent", f"autopilot-{agent_name}",
-            prompt,
-        ]
+        cmd = ["opencode", "run"]
+        if self.model:
+            cmd += ["-m", self.model]
+        cmd.append(prompt)
+        return cmd
 
     def _classify_error(self, returncode: int, stderr: str) -> ErrorType:
         text = stderr.lower()

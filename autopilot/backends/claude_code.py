@@ -8,13 +8,14 @@ class ClaudeCodeBackend(BackendBase):
         return "claude"
 
     def _build_cmd(self, agent_name: str, prompt: str, ctx: RunContext) -> list[str]:
-        return [
-            "claude",
-            "-p",
-            "--dangerously-skip-permissions",
-            "--agent", agent_name,
-            prompt,
-        ]
+        cmd = ["claude", "-p"]
+        if self.allow_dangerous:
+            cmd.append("--dangerously-skip-permissions")
+        cmd += ["--agent", agent_name]
+        if self.model:
+            cmd += ["--model", self.model]
+        cmd.append(prompt)
+        return cmd
 
     def _classify_error(self, returncode: int, stderr: str) -> ErrorType:
         text = stderr.lower()

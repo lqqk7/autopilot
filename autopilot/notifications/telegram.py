@@ -15,11 +15,12 @@ class TelegramNotifier:
 
     def _send(self, text: str) -> None:
         try:
-            httpx.post(
+            resp = httpx.post(
                 f"{self._base}/sendMessage",
-                json={"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"},
+                json={"chat_id": self.chat_id, "text": text},
                 timeout=10,
             )
+            resp.raise_for_status()
         except Exception as e:
             logger.warning("Telegram send failed: %s", e)
 

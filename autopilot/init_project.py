@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import toml
-
 from autopilot.pipeline.context import Phase, PipelineState
 
 
@@ -30,15 +28,83 @@ def init_project(project_path: Path, backend: str) -> None:
 
     config_path = autopilot_dir / "config.toml"
     if not config_path.exists():
-        config = {
-            "autopilot": {
-                "backend": backend,
-                "max_parallel": 1,
-                "parallel_backends": [],
-                "fallback_backends": [],
-            }
-        }
-        config_path.write_text(toml.dumps(config), encoding="utf-8")
+        config_path.write_text(
+            f"""[autopilot]
+# Primary backend: claude | codex | opencode
+backend = "{backend}"
+
+# Max parallel feature workers
+max_parallel = 2
+
+# Backends for parallel workers (round-robin). Leave empty to reuse the primary backend.
+# Example: parallel_backends = ["claude", "codex"]
+parallel_backends = []
+
+# Fallback backends on rate-limit / quota exhausted (tried in order)
+fallback_backends = []
+
+# Log level: DEBUG | INFO | WARNING | ERROR
+log_level = "INFO"
+
+# Model override — leave empty to use the tool's own default (auto).
+# Use the model name exactly as the tool accepts it, e.g.:
+#   claude  → "claude-opus-4-6" | "claude-sonnet-4-6" | "sonnet" | "opus"
+#   codex   → "o3" | "o4-mini" | "gpt-4o"
+#   opencode → "anthropic/claude-opus-4-6" | "openai/o3"
+model = ""
+
+
+[autopilot.review]
+# Review mode:
+#   self    — the same backend that wrote the code reviews it (default)
+#   cross   — a different backend from the parallel pool reviews it;
+#             falls back to "self" when the pool has only one backend
+#   backend — a specific named backend always handles review;
+#             falls back to "self" if the named backend is unavailable
+mode = "self"
+
+# Only used when mode = "backend". Use any backend name: claude | codex | opencode
+# backend = "codex"
+
+
+[autopilot.retries]
+# Max FIX-phase attempts per feature before marking it as failed
+max_fix_retries = 5
+# Max consecutive phase failures before pausing the pipeline for human review
+max_phase_retries = 3
+
+
+[autopilot.timeouts]
+# Per-phase timeout in seconds. Increase if your model/network is slow.
+interview  = 300    #  5 min — requirement clarification questions
+doc_gen    = 600    # 10 min — full technical doc suite (9 docs)
+doc_update = 600    # 10 min — incremental doc updates after new requirements
+planning   = 600    # 10 min — feature decomposition and task list
+delivery   = 600    # 10 min — delivery docs (changelog, release notes, deploy guide)
+code       = 1800   # 30 min — feature implementation (largest phase)
+test       = 900    # 15 min — test writing and execution
+review     = 600    # 10 min — code review
+fix        = 900    # 15 min — bug fixing based on test/review feedback
+knowledge  = 600    # 10 min — knowledge base update
+
+
+[autopilot.permissions]
+# Allow backends to skip approval prompts and run without sandbox restrictions.
+# Default: true — keeps the dev loop uninterrupted (no manual confirmations).
+# Set to false in production or security-sensitive environments.
+allow_dangerous_permissions = true
+
+
+[autopilot.notifications]
+# Telegram notification switch. Default: disabled.
+# When enabled = true, the following environment variables must be set:
+#   AUTOPILOT_TELEGRAM_TOKEN   — Bot token obtained from @BotFather
+#   AUTOPILOT_TELEGRAM_CHAT_ID — Target chat ID or group/channel ID
+# Autopilot sends notifications on: phase complete, human pause, feature done.
+enabled = false
+""",
+            encoding="utf-8",
+        )
 
     state_path = autopilot_dir / "state.json"
     if not state_path.exists():

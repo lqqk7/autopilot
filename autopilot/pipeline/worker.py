@@ -10,22 +10,13 @@ from autopilot.agents.loader import AgentLoader
 from autopilot.backends.base import BackendBase, BackendResult, ErrorType, RunContext
 from autopilot.knowledge.compactor import KnowledgeCompactor
 from autopilot.knowledge.local import LocalKnowledge
-from autopilot.pipeline.context import AgentOutput, Feature, FeatureList, Phase
-from autopilot.pipeline.phases import ExitCondition
+from autopilot.pipeline.config import PipelineConfig
+from autopilot.pipeline.context import AgentOutput, Feature, Phase
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, handle_error
 
 logger = logging.getLogger(__name__)
 
-MAX_FIX_RETRIES = 5
-
 _FEATURE_PHASES = (Phase.CODE, Phase.TEST, Phase.REVIEW, Phase.FIX)
-
-_PHASE_TIMEOUT: dict[Phase, int] = {
-    Phase.CODE: 1800,
-    Phase.TEST: 900,
-    Phase.REVIEW: 600,
-    Phase.FIX: 900,
-}
 
 _PHASE_TO_AGENT: dict[Phase, str] = {
     Phase.CODE: "coder",
@@ -36,16 +27,20 @@ _PHASE_TO_AGENT: dict[Phase, str] = {
 
 _TRANSITIONS: dict[tuple[Phase, bool], Phase] = {
     (Phase.CODE, True): Phase.TEST,
+    (Phase.CODE, False): Phase.FIX,
     (Phase.TEST, True): Phase.REVIEW,
     (Phase.TEST, False): Phase.FIX,
-    (Phase.REVIEW, True): Phase.DEV_LOOP,   # DEV_LOOP signals completion
+    (Phase.REVIEW, True): Phase.DEV_LOOP,
     (Phase.REVIEW, False): Phase.FIX,
     (Phase.FIX, True): Phase.CODE,
     (Phase.FIX, False): Phase.CODE,
 }
 
-# Lock for writing to shared files (feature_list.json, project-overview.md)
 _file_lock = threading.Lock()
+
+
+def _backend_name(backend: BackendBase) -> str:
+    return type(backend).__name__.lower().replace("backend", "")
 
 
 class FeatureWorker:
@@ -57,20 +52,27 @@ class FeatureWorker:
         backend: BackendBase,
         autopilot_dir: Path,
         project_path: Path,
+        config: PipelineConfig | None = None,
+        review_backend: BackendBase | None = None,
     ) -> None:
         self.feature = feature
         self.backend = backend
         self.autopilot_dir = autopilot_dir
         self.project_path = project_path
+        self._cfg = config or PipelineConfig()
+        # None = use self.backend for review (self / fallback)
+        self._review_backend = review_backend
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
         self.artifacts: list[str] = []
         self.fix_retries = 0
+        self.current_phase: Phase = Phase.CODE
+        self.backend_name: str = _backend_name(backend)
+        self.current_backend_name: str = self.backend_name
 
     def run(self) -> bool:
         """Execute the full feature cycle. Returns True on success."""
         phase = Phase.CODE
-        phase_retries = 0
 
         while True:
             passed = self._run_single_phase(phase)
@@ -86,18 +88,27 @@ class FeatureWorker:
 
             if next_phase == Phase.FIX:
                 self.fix_retries += 1
-                if self.fix_retries > MAX_FIX_RETRIES:
+                if self.fix_retries > self._cfg.max_fix_retries:
                     logger.warning("[%s] Max fix retries exceeded", self.feature.id)
                     return False
 
             phase = next_phase
-            phase_retries = 0 if passed else phase_retries + 1
+
+    def _active_backend(self, phase: Phase) -> BackendBase:
+        """Return the backend to use for this phase."""
+        if phase == Phase.REVIEW and self._review_backend is not None:
+            return self._review_backend
+        return self.backend
 
     def _run_single_phase(self, phase: Phase) -> bool:
+        self.current_phase = phase
+        active = self._active_backend(phase)
+        self.current_backend_name = _backend_name(active)
+
         kb = LocalKnowledge(self.autopilot_dir / "knowledge")
         knowledge_md = kb.read_all()
         if self._compactor.needs_compaction(knowledge_md):
-            knowledge_md = self._compactor.compact(knowledge_md, self.backend, self.autopilot_dir)
+            knowledge_md = self._compactor.compact(knowledge_md, active, self.autopilot_dir)
 
         ctx = RunContext(
             project_path=self.project_path,
@@ -107,13 +118,13 @@ class FeatureWorker:
         )
         agent_name = _PHASE_TO_AGENT[phase]
         prompt = self._loader.build_system_prompt(agent_name, ctx)
-        timeout = _PHASE_TIMEOUT.get(phase, 300)
+        timeout = self._cfg.timeout_for(phase)
         local_retry = 0
 
-        logger.info("[%s] Starting phase %s", self.feature.id, phase.value)
+        logger.info("[%s] Starting phase %s (backend: %s)", self.feature.id, phase.value, self.current_backend_name)
 
         while True:
-            result = self.backend.run(agent_name, prompt, ctx, timeout=timeout)
+            result = active.run(agent_name, prompt, ctx, timeout=timeout)
 
             if result.success:
                 parsed = self._parse_output(result, local_retry)
@@ -130,7 +141,7 @@ class FeatureWorker:
                 continue
 
             if result.error_type == ErrorType.context_overflow:
-                knowledge_md = self._compactor.compact(knowledge_md, self.backend, self.autopilot_dir)
+                knowledge_md = self._compactor.compact(knowledge_md, active, self.autopilot_dir)
                 ctx = RunContext(
                     project_path=self.project_path,
                     docs_path=self.autopilot_dir / "docs",
@@ -148,6 +159,14 @@ class FeatureWorker:
         try:
             agent_output = AgentOutput.parse(result.output)
             self.artifacts.extend(agent_output.artifacts)
+            if agent_output.status != "success":
+                logger.info(
+                    "[%s] Agent reported status=%r: %s",
+                    self.feature.id,
+                    agent_output.status,
+                    agent_output.summary[:200],
+                )
+                return False  # failure / partial → FIX via _TRANSITIONS
             return True
         except ValueError:
             fake = BackendResult(

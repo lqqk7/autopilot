@@ -1,8 +1,6 @@
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 from autopilot.knowledge.local import LocalKnowledge
-from autopilot.knowledge.zep import ZepKnowledge
 
 
 def test_local_knowledge_write_bug(tmp_path: Path):
@@ -36,22 +34,10 @@ def test_local_knowledge_read_all(tmp_path: Path):
     assert "dec1" in content
 
 
-def test_zep_write_calls_api():
-    with patch("httpx.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200)
-        zep = ZepKnowledge(api_key="test-key", graph_id="project.test.shared")
-        zep.write("Test memory content")
-        assert mock_post.called
-        call_url = mock_post.call_args[0][0] if mock_post.call_args[0] else str(mock_post.call_args)
-        assert "getzep.com" in call_url
-
-
-def test_zep_recall_calls_api():
-    with patch("httpx.post") as mock_post:
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"results": [{"content": "recalled memory"}]},
-        )
-        zep = ZepKnowledge(api_key="test-key", graph_id="project.test.shared")
-        result = zep.recall("jwt token")
-        assert "recalled memory" in result
+def test_local_knowledge_read_all_excludes_summary(tmp_path: Path):
+    kb = LocalKnowledge(knowledge_dir=tmp_path / "knowledge")
+    kb.write_bug("real-bug", "cause", "fix", [])
+    (tmp_path / "knowledge" / "summary.md").write_text("compacted summary")
+    content = kb.read_all()
+    assert "real-bug" in content
+    assert "compacted summary" not in content

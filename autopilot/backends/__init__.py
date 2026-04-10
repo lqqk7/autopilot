@@ -4,7 +4,7 @@ from autopilot.backends.codex import CodexBackend
 from autopilot.backends.opencode import OpenCodeBackend
 
 
-def get_backend(name: str) -> BackendBase:
+def get_backend(name: str, model: str = "", allow_dangerous: bool = True) -> BackendBase:
     backends = {
         "claude": ClaudeCodeBackend,
         "codex": CodexBackend,
@@ -12,7 +12,7 @@ def get_backend(name: str) -> BackendBase:
     }
     if name not in backends:
         raise ValueError(f"Unknown backend: {name!r}. Choose from {list(backends)}")
-    return backends[name]()
+    return backends[name](model=model, allow_dangerous=allow_dangerous)
 
 
 __all__ = [

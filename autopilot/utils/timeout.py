@@ -1,32 +1,28 @@
 from __future__ import annotations
 
-import threading
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FuturesTimeoutError
 from typing import Callable, TypeVar
 
 T = TypeVar("T")
 
 
 class TimeoutError(Exception):
-    """Raised when a function exceeds the timeout."""
+    """Raised when a function exceeds the allowed timeout."""
 
 
 def run_with_timeout(fn: Callable[[], T], timeout_seconds: int) -> T:
-    """Run fn in a thread; raise TimeoutError if it doesn't finish in time."""
-    result: list[T] = []
-    exception: list[BaseException] = []
+    """Run *fn* in a thread pool; raise TimeoutError if it doesn't finish in time.
 
-    def target() -> None:
+    Uses ``concurrent.futures`` so the caller gets a proper exception without
+    leaking daemon threads that silently mutate shared state after the timeout.
+    The underlying thread cannot be forcibly interrupted in CPython, but the
+    executor is shut down (``wait=False``) so it does not block program exit.
+    """
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn)
         try:
-            result.append(fn())
-        except Exception as e:
-            exception.append(e)
-
-    thread = threading.Thread(target=target, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout_seconds)
-
-    if thread.is_alive():
-        raise TimeoutError(f"Function did not complete within {timeout_seconds}s")
-    if exception:
-        raise exception[0]
-    return result[0]
+            return future.result(timeout=timeout_seconds)
+        except _FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(f"Function did not complete within {timeout_seconds}s")
