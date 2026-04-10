@@ -106,21 +106,81 @@ uv pip install -e .
 
 ### Quick Start
 
+#### Step 1 — Initialize your project
+
+Navigate to your project directory (can be empty — Autopilot will build everything from scratch) and run:
+
 ```bash
-# 1. Initialize autopilot in your project
-cd my-project
+mkdir my-project && cd my-project
 ap init --backend claude
+```
 
-# 2. Write your requirements
-echo "Build a REST API for task management with CRUD operations" \
-  > .autopilot/requirements/main.md
+This automatically creates the `.autopilot/` directory with all required subdirectories, a pre-filled `config.toml`, and initial pipeline state. Nothing else is needed — your project is ready to go.
 
-# 3. Run the full pipeline
+```
+my-project/
+└── .autopilot/
+    ├── config.toml          ← edit this to configure backends, timeouts, etc.
+    ├── requirements/        ← put your requirement files here  ← YOU START HERE
+    ├── docs/                ← auto-generated technical docs
+    └── knowledge/           ← auto-accumulated decisions and bug fixes
+```
+
+---
+
+#### Step 2 — Write your requirements
+
+Drop one or more files into `.autopilot/requirements/`. Autopilot reads **all files** in that directory — split requirements however makes sense for your project.
+
+**Format:** any format AI can read — plain text, Markdown, even bullet points. There is no template to follow.
+
+**What to write:** describe what you want to build in natural language. You don't need to know technical jargon. The more detail the better, but even a rough description is enough to get started.
+
+> 💡 **Not a developer? That's fine.** Just describe what you want your software to do, as if you were explaining it to a friend. Autopilot's INTERVIEW phase will clarify any ambiguities before writing a single line of code.
+
+> 🔧 **Are a developer?** The more precise you are — stack preferences, API design, constraints, performance requirements — the better the output. Write as much as you want, across as many files as needed.
+
+**Examples of valid requirements:**
+
+```
+.autopilot/requirements/
+├── main.md          ← core feature description
+├── auth.md          ← authentication details
+└── api-notes.txt    ← additional API constraints
+```
+
+A simple `main.md` might look like:
+
+```markdown
+I want to build a task management web app.
+
+Features:
+- Users can register and log in
+- Users can create, edit, delete and complete tasks
+- Tasks have title, description, due date, and priority (high/medium/low)
+- Users can filter tasks by status and priority
+- Each user only sees their own tasks
+
+Tech preferences: Python backend, REST API, any database is fine.
+```
+
+That's all. Autopilot will ask clarifying questions in the INTERVIEW phase if anything is unclear.
+
+---
+
+#### Step 3 — Run the pipeline
+
+```bash
 ap run
+```
 
-# 4. If paused for human input, answer the questions then resume
+Autopilot starts the full pipeline. When it needs your input (INTERVIEW phase — clarifying questions about your requirements), it pauses and prints the questions. Answer them, then:
+
+```bash
 ap resume
 ```
+
+From that point on, the pipeline runs fully autonomously until all features are developed and delivery docs are generated.
 
 ---
 
@@ -523,21 +583,81 @@ uv pip install -e .
 
 ### 快速开始
 
+#### 第一步 — 初始化项目
+
+进入你的项目目录（可以是空目录，Autopilot 会从零开始构建一切），运行：
+
 ```bash
-# 1. 在你的项目中初始化 autopilot
-cd my-project
+mkdir my-project && cd my-project
 ap init --backend claude
+```
 
-# 2. 写需求文档
-echo "构建一个任务管理 REST API，支持 CRUD 操作" \
-  > .autopilot/requirements/main.md
+这会自动创建 `.autopilot/` 目录，包含所有子目录、预填好的 `config.toml` 和初始流水线状态。无需任何其他操作，项目就绪。
 
-# 3. 运行完整流水线
+```
+my-project/
+└── .autopilot/
+    ├── config.toml          ← 在此配置后端、超时时间等参数
+    ├── requirements/        ← 把你的需求文件放在这里  ← 你从这里开始
+    ├── docs/                ← 自动生成的技术文档
+    └── knowledge/           ← 自动积累的决策记录和 Bug 修复记录
+```
+
+---
+
+#### 第二步 — 写需求文档
+
+将一个或多个文件放入 `.autopilot/requirements/` 目录。Autopilot 会**读取该目录下的所有文件**——你可以按任何方式拆分需求。
+
+**格式不限：** 纯文本、Markdown、甚至随手写的要点列表都行，没有固定模板。
+
+**写什么：** 用自然语言描述你想构建的东西。不需要懂技术术语，写得越详细越好，但即使只是粗略描述也能跑起来。
+
+> 💡 **不懂开发？没关系。** 就像跟朋友解释一样，说清楚你想要软件做什么就够了。流水线的 INTERVIEW 阶段会在写代码之前主动向你提问、澄清模糊点。
+
+> 🔧 **懂开发？** 越精确越好——技术栈偏好、API 设计、性能要求、约束条件，全都可以写进去。想写多少文件都行，按模块拆分也完全没问题。
+
+**合法的需求文件示例：**
+
+```
+.autopilot/requirements/
+├── main.md          ← 核心功能描述
+├── auth.md          ← 鉴权相关细节
+└── api-notes.txt    ← 额外的 API 约束说明
+```
+
+一份最简单的 `main.md` 可以长这样：
+
+```markdown
+我想做一个任务管理 Web 应用。
+
+功能需求：
+- 用户可以注册和登录
+- 用户可以创建、编辑、删除、完成任务
+- 任务有标题、描述、截止日期和优先级（高/中/低）
+- 用户可以按状态和优先级筛选任务
+- 每个用户只能看到自己的任务
+
+技术偏好：Python 后端，REST API，数据库随意。
+```
+
+就这些。如果有什么不清楚的地方，Autopilot 在 INTERVIEW 阶段会主动来问你。
+
+---
+
+#### 第三步 — 启动流水线
+
+```bash
 ap run
+```
 
-# 4. 如果暂停等待人工输入，回答问题后继续
+Autopilot 启动完整流水线。当需要你介入时（INTERVIEW 阶段——澄清需求问题），流水线会暂停并打印问题。回答完毕后执行：
+
+```bash
 ap resume
 ```
+
+之后流水线全自动运行，直到所有 Feature 开发完成、交付文档生成为止。
 
 ---
 
