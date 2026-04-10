@@ -45,10 +45,18 @@ _PHASE_TO_AGENT: dict[Phase, str] = {
 
 
 class PipelineEngine:
-    def __init__(self, project_path: Path, backend: BackendBase) -> None:
+    def __init__(
+        self,
+        project_path: Path,
+        backend: BackendBase,
+        max_parallel: int = 1,
+        parallel_backends: list[BackendBase] | None = None,
+    ) -> None:
         self.project_path = project_path
         self.autopilot_dir = project_path / ".autopilot"
         self.backend = backend
+        self._max_parallel = max(1, max_parallel)
+        self._parallel_backends: list[BackendBase] = parallel_backends or []
         self.phase_runner = PhaseRunner()
         self.exit_condition = ExitCondition()
         token = os.environ.get("AUTOPILOT_TELEGRAM_TOKEN", "")
@@ -348,43 +356,86 @@ class PipelineEngine:
         logger.info("Pipeline ended: %s (%.0fs)", state.phase, elapsed)
 
     def _handle_dev_loop(self, state: PipelineState) -> None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from autopilot.pipeline.worker import FeatureWorker
+
         fl_path = self.autopilot_dir / "feature_list.json"
         if not fl_path.exists():
             state.phase = Phase.HUMAN_PAUSE
             state.pause_reason = "feature_list.json not found"
             self.save_state(state)
             return
+
         fl = FeatureList.load(fl_path)
         ordered = topological_sort(fl.pending())
         if not ordered:
             state.phase = Phase.DOC_UPDATE
-        else:
-            state.current_feature_id = ordered[0].id
-            state.phase = Phase.CODE
+            self.save_state(state)
+            return
+
+        # Pick up to max_parallel features (serial if max_parallel=1)
+        batch = ordered[: self._max_parallel]
+        state.active_feature_ids = [f.id for f in batch]
         self.save_state(state)
+
+        backends = self._worker_backends()
+        start = time.monotonic()
+
+        def run_worker(idx: int, feature: "Feature") -> tuple[str, bool, list[str]]:
+            backend = backends[idx % len(backends)]
+            worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path)
+            ok = worker.run()
+            return feature.id, ok, worker.artifacts
+
+        if len(batch) == 1:
+            fid, ok, arts = run_worker(0, batch[0])
+            results = [(fid, ok, arts)]
+        else:
+            results = []
+            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                futures = {pool.submit(run_worker, i, f): f for i, f in enumerate(batch)}
+                for fut in as_completed(futures):
+                    results.append(fut.result())
+
+        # Persist completions
+        fl = FeatureList.load(fl_path)
+        for fid, ok, arts in results:
+            self._collected_artifacts.extend(arts)
+            if ok:
+                for f in fl.features:
+                    if f.id == fid:
+                        f.status = "completed"
+                        break
+        fl.save(fl_path)
+
+        done_count = sum(1 for f in fl.features if f.status == "completed")
+        self._update_progress_section(fl, done_count)
+
+        if self.notifier:
+            for fid, ok, _ in results:
+                if ok:
+                    self.notifier.send_feature_done(
+                        title=fid,
+                        elapsed=time.monotonic() - start,
+                        progress=(done_count, len(fl.features)),
+                    )
+
+        state.active_feature_ids = []
+        state.current_feature_id = None
+        # Stay in DEV_LOOP to pick next batch
+        self.save_state(state)
+
+    def _worker_backends(self) -> list[BackendBase]:
+        """Return the list of backends to use for parallel workers."""
+        if self._parallel_backends:
+            return self._parallel_backends
+        # Reuse primary backend for all workers (safe: subprocess.run is thread-safe)
+        return [self.backend] * self._max_parallel
 
     def _on_phase_passed(self, state: PipelineState, start_time: float) -> None:
         next_phase = self.advance(state)
         state.phase = next_phase
         state.phase_retries = 0
-        if next_phase == Phase.DEV_LOOP and state.current_feature_id:
-            self._complete_feature(state, start_time)
-
-    def _complete_feature(self, state: PipelineState, start_time: float) -> None:
-        fl = FeatureList.load(self.autopilot_dir / "feature_list.json")
-        for f in fl.features:
-            if f.id == state.current_feature_id:
-                f.status = "completed"
-        fl.save(self.autopilot_dir / "feature_list.json")
-        done_count = sum(1 for feat in fl.features if feat.status == "completed")
-        self._update_progress_section(fl, done_count)
-        if self.notifier:
-            self.notifier.send_feature_done(
-                title=state.current_feature_id or "",
-                elapsed=time.monotonic() - start_time,
-                progress=(done_count, len(fl.features)),
-            )
-        state.current_feature_id = None
 
     def _update_progress_section(self, fl: FeatureList, done_count: int) -> None:
         """Write/replace the auto-maintained progress section in project-overview.md."""

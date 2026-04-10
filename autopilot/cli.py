@@ -42,10 +42,19 @@ def run(backend: str | None, model: str | None, phase: str | None, feature: str 
         raise SystemExit(1)
 
     config = toml.loads((autopilot_dir / "config.toml").read_text())
-    chosen_backend = backend or config["autopilot"]["backend"]
+    ap_cfg = config.get("autopilot", {})
+    chosen_backend = backend or ap_cfg["backend"]
+    max_parallel = ap_cfg.get("max_parallel", 1)
+    parallel_backends_names: list[str] = ap_cfg.get("parallel_backends", [])
+    parallel_backends = [get_backend(n) for n in parallel_backends_names] if parallel_backends_names else []
 
-    click.echo(f"Backend: {chosen_backend}")
-    engine = PipelineEngine(project_path=project_path, backend=get_backend(chosen_backend))
+    click.echo(f"Backend: {chosen_backend}  parallel: {max(max_parallel, len(parallel_backends))}")
+    engine = PipelineEngine(
+        project_path=project_path,
+        backend=get_backend(chosen_backend),
+        max_parallel=max_parallel,
+        parallel_backends=parallel_backends,
+    )
     engine.run()
 
 
@@ -69,7 +78,16 @@ def resume() -> None:
         state.save(autopilot_dir / "state.json")
 
     config = toml.loads((autopilot_dir / "config.toml").read_text())
-    engine = PipelineEngine(project_path=project_path, backend=get_backend(config["autopilot"]["backend"]))
+    ap_cfg = config.get("autopilot", {})
+    max_parallel = ap_cfg.get("max_parallel", 1)
+    parallel_backends_names: list[str] = ap_cfg.get("parallel_backends", [])
+    parallel_backends = [get_backend(n) for n in parallel_backends_names] if parallel_backends_names else []
+    engine = PipelineEngine(
+        project_path=project_path,
+        backend=get_backend(ap_cfg["backend"]),
+        max_parallel=max_parallel,
+        parallel_backends=parallel_backends,
+    )
     click.echo(f"Resuming from phase: {state.phase.value}")
     engine.run()
 
@@ -117,6 +135,123 @@ def status() -> None:
 def pause() -> None:
     """Pause the pipeline."""
     click.echo("Pausing...")
+
+
+@main.command(name="add")
+@click.argument("title")
+@click.option("--phase", default="backend", type=click.Choice(["backend", "frontend", "fullstack", "infra"]), show_default=True)
+@click.option("--depends-on", "depends_on", default="", help="Comma-separated feature IDs this depends on")
+@click.option("--test-file", "test_file", default="", help="Test file path")
+def add_feature(title: str, phase: str, depends_on: str, test_file: str) -> None:
+    """Add a new feature to the backlog and resume development.
+
+    Example: ap add "支付宝支付接口" --phase backend --depends-on feat-010
+    """
+    import json
+    from pathlib import Path
+    from autopilot.pipeline.context import FeatureList, Feature, PipelineState, Phase
+
+    autopilot_dir = Path.cwd() / ".autopilot"
+    fl_path = autopilot_dir / "feature_list.json"
+    if not fl_path.exists():
+        click.echo("Error: feature_list.json not found. Run `ap run` first.", err=True)
+        raise SystemExit(1)
+
+    fl = FeatureList.load(fl_path)
+    # Generate next feature ID
+    existing_nums = []
+    for f in fl.features:
+        try:
+            existing_nums.append(int(f.id.split("-")[1]))
+        except (IndexError, ValueError):
+            pass
+    next_num = max(existing_nums, default=0) + 1
+    new_id = f"feat-{next_num:03d}"
+
+    dep_list = [d.strip() for d in depends_on.split(",") if d.strip()]
+    new_feature = Feature(
+        id=new_id,
+        title=title,
+        phase=phase,
+        depends_on=dep_list,
+        status="pending",
+        test_file=test_file or f"tests/test_{new_id.replace('-', '_')}.py",
+    )
+    fl.features.append(new_feature)
+    fl.save(fl_path)
+
+    # If pipeline is DONE, reset to DEV_LOOP so it picks up new work
+    state = PipelineState.load(autopilot_dir / "state.json")
+    if state.phase == Phase.DONE:
+        state.phase = Phase.DEV_LOOP
+        state.phase_retries = 0
+        state.save(autopilot_dir / "state.json")
+        click.echo(f"✓ Added {new_id}: {title}")
+        click.echo("  Pipeline reset to DEV_LOOP. Run `ap resume` to start development.")
+    else:
+        click.echo(f"✓ Added {new_id}: {title}")
+        click.echo("  Feature queued. It will be picked up automatically when the pipeline reaches DEV_LOOP.")
+
+
+@main.command(name="redo")
+@click.argument("feature_id")
+@click.option("--and-dependents", "and_dependents", is_flag=True, default=False,
+              help="Also reset features that depend on this one")
+def redo_feature(feature_id: str, and_dependents: bool) -> None:
+    """Re-run a specific feature (reset to pending and resume).
+
+    Example: ap redo feat-005
+             ap redo feat-005 --and-dependents
+    """
+    from pathlib import Path
+    from autopilot.pipeline.context import FeatureList, PipelineState, Phase
+
+    autopilot_dir = Path.cwd() / ".autopilot"
+    fl_path = autopilot_dir / "feature_list.json"
+    if not fl_path.exists():
+        click.echo("Error: feature_list.json not found.", err=True)
+        raise SystemExit(1)
+
+    fl = FeatureList.load(fl_path)
+    target_ids = {feature_id}
+
+    if and_dependents:
+        # Find all features that (transitively) depend on this one
+        changed = True
+        while changed:
+            changed = False
+            for f in fl.features:
+                if f.id not in target_ids and any(d in target_ids for d in f.depends_on):
+                    target_ids.add(f.id)
+                    changed = True
+
+    reset_count = 0
+    for f in fl.features:
+        if f.id in target_ids:
+            f.status = "pending"
+            f.fix_retries = 0
+            reset_count += 1
+
+    if reset_count == 0:
+        click.echo(f"Error: feature '{feature_id}' not found.", err=True)
+        raise SystemExit(1)
+
+    fl.save(fl_path)
+
+    # Reset pipeline state to DEV_LOOP
+    state = PipelineState.load(autopilot_dir / "state.json")
+    if state.phase in (Phase.DONE, Phase.DOC_UPDATE, Phase.KNOWLEDGE, Phase.DELIVERY):
+        state.phase = Phase.DEV_LOOP
+    state.phase_retries = 0
+    state.current_feature_id = None
+    state.active_feature_ids = []
+    state.save(autopilot_dir / "state.json")
+
+    for fid in sorted(target_ids):
+        click.echo(f"  ↩ Reset: {fid}")
+    click.echo(f"✓ {reset_count} feature(s) reset to pending. Run `ap resume` to re-develop.")
+
+
 
 
 @main.group()

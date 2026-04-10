@@ -56,7 +56,8 @@ class FeatureList(BaseModel):
 
 class PipelineState(BaseModel):
     phase: Phase = Phase.INIT
-    current_feature_id: str | None = None
+    current_feature_id: str | None = None      # serial mode compat
+    active_feature_ids: list[str] = Field(default_factory=list)  # parallel mode
     phase_retries: int = 0
     pause_reason: str | None = None
 
