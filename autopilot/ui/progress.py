@@ -21,12 +21,16 @@ _DOC_PHASE_LISTS: dict[str, list[str]] = {
     "DELIVERY": DELIVERY_DOCS,
 }
 
+# Phases that watch docs/ for any file change (no fixed list)
+_DOC_WATCH_PHASES = {"DOC_UPDATE", "KNOWLEDGE"}
+
 
 class PhaseProgress:
     """Renders live terminal progress while a pipeline phase runs in a subprocess.
 
-    DOC_GEN/DELIVERY: shows a progress bar tracking how many docs have been written.
-    Other phases: shows a spinner with phase name, feature progress, and elapsed time.
+    DOC_GEN/DELIVERY : progress bar — fixed list of required docs.
+    DOC_UPDATE/KNOWLEDGE: spinner — shows most recently modified file in docs/.
+    Other phases      : spinner — phase name + feature progress + elapsed time.
     """
 
     def __init__(
@@ -42,6 +46,7 @@ class PhaseProgress:
         self.feature_title = feature_title
         self._doc_list = _DOC_PHASE_LISTS.get(phase_name) if docs_path else None
         self._is_doc_gen = self._doc_list is not None
+        self._is_doc_watch = phase_name in _DOC_WATCH_PHASES and docs_path is not None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._console = Console(stderr=False)
@@ -60,6 +65,8 @@ class PhaseProgress:
     def _run(self) -> None:
         if self._is_doc_gen:
             self._render_doc_gen()
+        elif self._is_doc_watch:
+            self._render_doc_watch()
         else:
             self._render_spinner()
 
@@ -81,12 +88,29 @@ class PhaseProgress:
                 done, latest = self._scan_docs()
                 progress.update(task, completed=done, current_file=latest)
                 time.sleep(0.5)
-            # Final update before exiting Live context
             done, latest = self._scan_docs()
             progress.update(task, completed=done, current_file=latest)
 
+    def _render_doc_watch(self) -> None:
+        """Spinner that shows the most recently modified file in docs/."""
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn(f"[bold cyan]{self.phase_name}"),
+            TextColumn("[dim]正在更新:[/] [bold white]{task.fields[current_file]}"),
+            TimeElapsedColumn(),
+            console=self._console,
+        )
+        task = progress.add_task(self.phase_name, total=None, current_file="")
+
+        with Live(progress, console=self._console, refresh_per_second=2):
+            while not self._stop.is_set():
+                latest = self._latest_modified_doc()
+                progress.update(task, current_file=latest)
+                time.sleep(0.5)
+            latest = self._latest_modified_doc()
+            progress.update(task, current_file=latest)
+
     def _render_spinner(self) -> None:
-        # Build description: "CODE [36/49] 数据库Schema..." (truncated)
         desc = self._build_description()
         progress = Progress(
             SpinnerColumn(),
@@ -113,7 +137,7 @@ class PhaseProgress:
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _scan_docs(self) -> tuple[int, str]:
-        """Return (completed_count, latest_written_filename)."""
+        """Return (completed_count, latest_written_filename) for fixed doc lists."""
         if not self.docs_path or not self._doc_list:
             return 0, ""
         done = 0
@@ -134,3 +158,22 @@ class PhaseProgress:
                 latest_mtime = mtime
                 latest_file = rel
         return done, latest_file
+
+    def _latest_modified_doc(self) -> str:
+        """Return the relative path of the most recently modified .md file in docs/."""
+        if not self.docs_path or not self.docs_path.exists():
+            return ""
+        latest_file = ""
+        latest_mtime = 0.0
+        try:
+            for f in self.docs_path.rglob("*.md"):
+                try:
+                    mtime = f.stat().st_mtime
+                except OSError:
+                    continue
+                if mtime > latest_mtime:
+                    latest_mtime = mtime
+                    latest_file = str(f.relative_to(self.docs_path))
+        except OSError:
+            pass
+        return latest_file

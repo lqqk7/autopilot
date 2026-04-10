@@ -89,7 +89,8 @@ class PipelineEngine:
         if state.phase == Phase.INIT:
             return Phase.INTERVIEW
         if state.phase == Phase.INTERVIEW:
-            # Pause for human to fill in answers — resume will skip the pause
+            # Pause for human to fill in answers.
+            # post_interview_phase tells resume where to go next (DOC_GEN or PLANNING).
             return Phase.HUMAN_PAUSE
         if state.phase == Phase.DOC_GEN:
             docs = self.autopilot_dir / "docs"
@@ -193,7 +194,8 @@ class PipelineEngine:
         progress = None
         if sys.stdout.isatty():
             from autopilot.ui.progress import PhaseProgress
-            docs_path = ctx.docs_path if state.phase in (Phase.DOC_GEN, Phase.DELIVERY) else None
+            _doc_phases = (Phase.DOC_GEN, Phase.DELIVERY, Phase.DOC_UPDATE, Phase.KNOWLEDGE)
+            docs_path = ctx.docs_path if state.phase in _doc_phases else None
             feature_progress: tuple[int, int] | None = None
             if state.current_feature_id:
                 fl_p = FeatureList.load(self.autopilot_dir / "feature_list.json")

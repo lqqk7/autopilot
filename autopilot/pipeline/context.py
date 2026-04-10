@@ -61,6 +61,7 @@ class PipelineState(BaseModel):
     active_feature_ids: list[str] = Field(default_factory=list)  # parallel mode
     phase_retries: int = 0
     pause_reason: str | None = None
+    post_interview_phase: Phase | None = None   # where to go after INTERVIEW pause
 
     def save(self, path: Path) -> None:
         path.write_text(self.model_dump_json(indent=2), encoding="utf-8")

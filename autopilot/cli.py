@@ -74,13 +74,16 @@ def resume() -> None:
     if state.phase == Phase.HUMAN_PAUSE:
         if state.current_feature_id or state.active_feature_ids:
             next_phase = Phase.DEV_LOOP
+        elif state.post_interview_phase is not None:
+            next_phase = state.post_interview_phase
         elif state.pause_reason and "interview" in (state.pause_reason or "").lower():
-            next_phase = Phase.DOC_GEN   # answered interview questions, proceed
+            next_phase = Phase.DOC_GEN
         else:
             next_phase = Phase.DOC_GEN
         state.phase = next_phase
         state.phase_retries = 0
         state.pause_reason = None
+        state.post_interview_phase = None
         state.save(autopilot_dir / "state.json")
 
     config = toml.loads((autopilot_dir / "config.toml").read_text())
@@ -170,20 +173,21 @@ def add_feature(title_or_reqfile: str, phase: str, depends_on: str, test_file: s
     state = PipelineState.load(autopilot_dir / "state.json")
 
     if from_requirements:
-        # Requirements mode: trigger re-planning phase for new requirements file
+        # Requirements mode: run INTERVIEW first (to clarify new requirements),
+        # then go to PLANNING (not DOC_GEN — existing docs stay, we just extend the plan)
         req_file = autopilot_dir / "requirements" / title_or_reqfile
         if not req_file.exists():
             click.echo(f"Error: requirements file not found: {req_file}", err=True)
             raise SystemExit(1)
-        # Reset to PLANNING so the planner picks up the new requirements
-        state.phase = Phase.PLANNING
+        state.phase = Phase.INTERVIEW
         state.phase_retries = 0
         state.current_feature_id = None
         state.active_feature_ids = []
+        state.post_interview_phase = Phase.PLANNING
         state.save(autopilot_dir / "state.json")
         click.echo(f"✓ Requirements file: {req_file.name}")
-        click.echo("  Pipeline reset to PLANNING — run `ap resume` to decompose into features.")
-        click.echo("  Existing completed features will be preserved; new features appended.")
+        click.echo("  Starting INTERVIEW → PLANNING flow.")
+        click.echo("  Run `ap resume` — autopilot will clarify requirements, then decompose into features.")
         return
 
     # Simple mode: directly add a single feature
