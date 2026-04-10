@@ -33,7 +33,8 @@ DELIVERY_DOCS = [
 ]
 
 TRANSITIONS: dict[tuple[Phase, bool], Phase] = {
-    (Phase.INIT, True): Phase.DOC_GEN,
+    (Phase.INIT, True): Phase.INTERVIEW,
+    (Phase.INTERVIEW, True): Phase.DOC_GEN,
     (Phase.DOC_GEN, True): Phase.PLANNING,
     (Phase.PLANNING, True): Phase.DEV_LOOP,
     (Phase.CODE, True): Phase.TEST,

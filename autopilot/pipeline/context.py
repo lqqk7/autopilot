@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 class Phase(str, Enum):
     INIT = "INIT"
+    INTERVIEW = "INTERVIEW"
     DOC_GEN = "DOC_GEN"
     PLANNING = "PLANNING"
     DEV_LOOP = "DEV_LOOP"

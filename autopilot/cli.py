@@ -72,7 +72,13 @@ def resume() -> None:
     state = PipelineState.load(autopilot_dir / "state.json")
 
     if state.phase == Phase.HUMAN_PAUSE:
-        state.phase = Phase.DEV_LOOP if state.current_feature_id else Phase.DOC_GEN
+        if state.current_feature_id or state.active_feature_ids:
+            next_phase = Phase.DEV_LOOP
+        elif state.pause_reason and "interview" in (state.pause_reason or "").lower():
+            next_phase = Phase.DOC_GEN   # answered interview questions, proceed
+        else:
+            next_phase = Phase.DOC_GEN
+        state.phase = next_phase
         state.phase_retries = 0
         state.pause_reason = None
         state.save(autopilot_dir / "state.json")
@@ -138,27 +144,55 @@ def pause() -> None:
 
 
 @main.command(name="add")
-@click.argument("title")
+@click.argument("title_or_reqfile")
 @click.option("--phase", default="backend", type=click.Choice(["backend", "frontend", "fullstack", "infra"]), show_default=True)
 @click.option("--depends-on", "depends_on", default="", help="Comma-separated feature IDs this depends on")
 @click.option("--test-file", "test_file", default="", help="Test file path")
-def add_feature(title: str, phase: str, depends_on: str, test_file: str) -> None:
-    """Add a new feature to the backlog and resume development.
+@click.option("--from-requirements", "from_requirements", is_flag=True, default=False,
+              help="Treat argument as a requirements file in .autopilot/requirements/ and re-run planning")
+def add_feature(title_or_reqfile: str, phase: str, depends_on: str, test_file: str, from_requirements: bool) -> None:
+    """Add new feature(s) to the backlog.
 
-    Example: ap add "支付宝支付接口" --phase backend --depends-on feat-010
+    \b
+    Simple mode (quick, single feature):
+      ap add "支付宝支付接口" --phase backend --depends-on feat-010
+
+    \b
+    Requirements mode (complex, re-runs AI planning for new req doc):
+      1. Write new requirements to .autopilot/requirements/payment.md
+      2. ap add payment.md --from-requirements
+      → Triggers PLANNING phase to decompose new requirements into features
     """
-    import json
     from pathlib import Path
     from autopilot.pipeline.context import FeatureList, Feature, PipelineState, Phase
 
     autopilot_dir = Path.cwd() / ".autopilot"
+    state = PipelineState.load(autopilot_dir / "state.json")
+
+    if from_requirements:
+        # Requirements mode: trigger re-planning phase for new requirements file
+        req_file = autopilot_dir / "requirements" / title_or_reqfile
+        if not req_file.exists():
+            click.echo(f"Error: requirements file not found: {req_file}", err=True)
+            raise SystemExit(1)
+        # Reset to PLANNING so the planner picks up the new requirements
+        state.phase = Phase.PLANNING
+        state.phase_retries = 0
+        state.current_feature_id = None
+        state.active_feature_ids = []
+        state.save(autopilot_dir / "state.json")
+        click.echo(f"✓ Requirements file: {req_file.name}")
+        click.echo("  Pipeline reset to PLANNING — run `ap resume` to decompose into features.")
+        click.echo("  Existing completed features will be preserved; new features appended.")
+        return
+
+    # Simple mode: directly add a single feature
     fl_path = autopilot_dir / "feature_list.json"
     if not fl_path.exists():
         click.echo("Error: feature_list.json not found. Run `ap run` first.", err=True)
         raise SystemExit(1)
 
     fl = FeatureList.load(fl_path)
-    # Generate next feature ID
     existing_nums = []
     for f in fl.features:
         try:
@@ -171,7 +205,7 @@ def add_feature(title: str, phase: str, depends_on: str, test_file: str) -> None
     dep_list = [d.strip() for d in depends_on.split(",") if d.strip()]
     new_feature = Feature(
         id=new_id,
-        title=title,
+        title=title_or_reqfile,
         phase=phase,
         depends_on=dep_list,
         status="pending",
@@ -180,17 +214,15 @@ def add_feature(title: str, phase: str, depends_on: str, test_file: str) -> None
     fl.features.append(new_feature)
     fl.save(fl_path)
 
-    # If pipeline is DONE, reset to DEV_LOOP so it picks up new work
-    state = PipelineState.load(autopilot_dir / "state.json")
-    if state.phase == Phase.DONE:
+    if state.phase in (Phase.DONE, Phase.DELIVERY, Phase.KNOWLEDGE, Phase.DOC_UPDATE):
         state.phase = Phase.DEV_LOOP
         state.phase_retries = 0
         state.save(autopilot_dir / "state.json")
-        click.echo(f"✓ Added {new_id}: {title}")
+        click.echo(f"✓ Added {new_id}: {title_or_reqfile}")
         click.echo("  Pipeline reset to DEV_LOOP. Run `ap resume` to start development.")
     else:
-        click.echo(f"✓ Added {new_id}: {title}")
-        click.echo("  Feature queued. It will be picked up automatically when the pipeline reaches DEV_LOOP.")
+        click.echo(f"✓ Added {new_id}: {title_or_reqfile}")
+        click.echo("  Feature queued — will be picked up automatically in DEV_LOOP.")
 
 
 @main.command(name="redo")

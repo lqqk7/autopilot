@@ -6,7 +6,12 @@ from pathlib import Path
 
 def test_next_phase_from_init():
     runner = PhaseRunner()
-    assert runner.next_phase(Phase.INIT, passed=True) == Phase.DOC_GEN
+    assert runner.next_phase(Phase.INIT, passed=True) == Phase.INTERVIEW
+
+
+def test_next_phase_from_interview():
+    runner = PhaseRunner()
+    assert runner.next_phase(Phase.INTERVIEW, passed=True) == Phase.DOC_GEN
 
 
 def test_next_phase_from_doc_gen():

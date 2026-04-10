@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+import click
+
 from autopilot.backends.base import BackendBase, BackendResult, ErrorType, RunContext
 from autopilot.notifications.telegram import TelegramNotifier
 from autopilot.pipeline.context import AgentOutput, FeatureList, Phase, PipelineState, RunResult
@@ -19,6 +21,7 @@ MAX_PHASE_RETRIES = 3
 
 # Per-phase backend timeout (seconds). Heavy phases need more time.
 _PHASE_TIMEOUT: dict[Phase, int] = {
+    Phase.INTERVIEW: 300,    # 5 min: reads requirements, outputs questions
     Phase.DOC_GEN: 600,      # 10 min: generates 9 technical/design docs
     Phase.DOC_UPDATE: 600,   # 10 min: updates multiple docs
     Phase.PLANNING: 600,     # 10 min: feature decomposition can be complex
@@ -32,6 +35,7 @@ _PHASE_TIMEOUT: dict[Phase, int] = {
 _DEFAULT_TIMEOUT = 300       # 5 min fallback (should not be hit by any real phase)
 
 _PHASE_TO_AGENT: dict[Phase, str] = {
+    Phase.INTERVIEW: "interviewer",
     Phase.DOC_GEN: "doc_gen",
     Phase.PLANNING: "planner",
     Phase.CODE: "coder",
@@ -83,7 +87,10 @@ class PipelineEngine:
     def advance(self, state: PipelineState) -> Phase:
         """Determine the next phase based on current state (no AI involved)."""
         if state.phase == Phase.INIT:
-            return Phase.DOC_GEN
+            return Phase.INTERVIEW
+        if state.phase == Phase.INTERVIEW:
+            # Pause for human to fill in answers — resume will skip the pause
+            return Phase.HUMAN_PAUSE
         if state.phase == Phase.DOC_GEN:
             docs = self.autopilot_dir / "docs"
             return Phase.PLANNING if self.exit_condition.doc_gen_complete(docs) else Phase.DOC_GEN
@@ -345,6 +352,21 @@ class PipelineEngine:
             passed = self.run_phase(state)
             if passed:
                 self._on_phase_passed(state, start_time)
+                # INTERVIEW done → pause for human to fill in answers
+                if state.phase == Phase.HUMAN_PAUSE and not state.pause_reason:
+                    state.pause_reason = "interview: please fill in .autopilot/requirements/INTERVIEW.md then run `ap resume`"
+                    self.save_state(state)
+                    click.echo("\n" + "═" * 60)
+                    click.echo("📋  需求澄清报告已生成！")
+                    click.echo("    请打开并填写：")
+                    click.echo("    .autopilot/requirements/INTERVIEW.md")
+                    click.echo("    填写完成后运行 `ap resume` 继续")
+                    click.echo("═" * 60 + "\n")
+                    if self.notifier:
+                        self.notifier.send_pause(
+                            phase="INTERVIEW",
+                            reason="请填写需求澄清报告后运行 ap resume",
+                        )
             self.save_state(state)
             logger.info("Phase: %s | retries: %d", state.phase, state.phase_retries)
 
@@ -356,7 +378,9 @@ class PipelineEngine:
         logger.info("Pipeline ended: %s (%.0fs)", state.phase, elapsed)
 
     def _handle_dev_loop(self, state: PipelineState) -> None:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import itertools
+        import threading
+        from concurrent.futures import Future, ThreadPoolExecutor, as_completed
         from autopilot.pipeline.worker import FeatureWorker
 
         fl_path = self.autopilot_dir / "feature_list.json"
@@ -373,47 +397,48 @@ class PipelineEngine:
             self.save_state(state)
             return
 
-        # Pick up to max_parallel features (serial if max_parallel=1)
-        batch = ordered[: self._max_parallel]
-        state.active_feature_ids = [f.id for f in batch]
-        self.save_state(state)
+        pool_backends = self._backend_pool()
+        backend_cycle = itertools.cycle(pool_backends)   # infinite round-robin
+        backend_lock = threading.Lock()
 
-        backends = self._worker_backends()
+        def next_backend() -> BackendBase:
+            with backend_lock:
+                return next(backend_cycle)
+
         start = time.monotonic()
+        results: list[tuple[str, bool, list[str]]] = []
 
-        def run_worker(idx: int, feature: "Feature") -> tuple[str, bool, list[str]]:
-            backend = backends[idx % len(backends)]
-            worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path)
-            ok = worker.run()
-            return feature.id, ok, worker.artifacts
+        # Run all pending features with max_parallel concurrency,
+        # each worker grabs the next backend from the round-robin pool.
+        with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
+            def run_worker(feature: "Feature") -> tuple[str, bool, list[str]]:
+                backend = next_backend()
+                logger.info("[%s] assigned to %s", feature.id, type(backend).__name__)
+                worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path)
+                ok = worker.run()
+                return feature.id, ok, worker.artifacts
 
-        if len(batch) == 1:
-            fid, ok, arts = run_worker(0, batch[0])
-            results = [(fid, ok, arts)]
-        else:
-            results = []
-            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-                futures = {pool.submit(run_worker, i, f): f for i, f in enumerate(batch)}
-                for fut in as_completed(futures):
-                    results.append(fut.result())
+            futures: list[Future[tuple[str, bool, list[str]]]] = [
+                pool.submit(run_worker, f) for f in ordered
+            ]
+            state.active_feature_ids = [f.id for f in ordered]
+            self.save_state(state)
 
-        # Persist completions
-        fl = FeatureList.load(fl_path)
-        for fid, ok, arts in results:
-            self._collected_artifacts.extend(arts)
-            if ok:
-                for f in fl.features:
-                    if f.id == fid:
-                        f.status = "completed"
-                        break
-        fl.save(fl_path)
-
-        done_count = sum(1 for f in fl.features if f.status == "completed")
-        self._update_progress_section(fl, done_count)
-
-        if self.notifier:
-            for fid, ok, _ in results:
+            for fut in as_completed(futures):
+                fid, ok, arts = fut.result()
+                results.append((fid, ok, arts))
+                # Mark completed immediately so toposort unblocks dependents
+                fl = FeatureList.load(fl_path)
+                self._collected_artifacts.extend(arts)
                 if ok:
+                    for f in fl.features:
+                        if f.id == fid:
+                            f.status = "completed"
+                            break
+                fl.save(fl_path)
+                done_count = sum(1 for f in fl.features if f.status == "completed")
+                self._update_progress_section(fl, done_count)
+                if self.notifier and ok:
                     self.notifier.send_feature_done(
                         title=fid,
                         elapsed=time.monotonic() - start,
@@ -422,15 +447,13 @@ class PipelineEngine:
 
         state.active_feature_ids = []
         state.current_feature_id = None
-        # Stay in DEV_LOOP to pick next batch
         self.save_state(state)
 
-    def _worker_backends(self) -> list[BackendBase]:
-        """Return the list of backends to use for parallel workers."""
+    def _backend_pool(self) -> list[BackendBase]:
+        """Return the backend pool for round-robin worker assignment."""
         if self._parallel_backends:
             return self._parallel_backends
-        # Reuse primary backend for all workers (safe: subprocess.run is thread-safe)
-        return [self.backend] * self._max_parallel
+        return [self.backend]
 
     def _on_phase_passed(self, state: PipelineState, start_time: float) -> None:
         next_phase = self.advance(state)

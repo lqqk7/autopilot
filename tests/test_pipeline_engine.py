@@ -27,14 +27,20 @@ def test_engine_initial_state(engine: PipelineEngine):
     assert state.phase == Phase.INIT
 
 
-def test_engine_transitions_to_doc_gen(engine: PipelineEngine, tmp_path: Path):
-    # Seed requirements
-    (tmp_path / ".autopilot" / "requirements" / "requirements.md").write_text("Build a todo app")
+def test_engine_transitions_to_interview(engine: PipelineEngine, tmp_path: Path):
     state = engine.load_state()
     state.phase = Phase.INIT
     engine.save_state(state)
     next_phase = engine.advance(state)
-    assert next_phase == Phase.DOC_GEN
+    assert next_phase == Phase.INTERVIEW
+
+
+def test_engine_interview_transitions_to_human_pause(engine: PipelineEngine, tmp_path: Path):
+    state = engine.load_state()
+    state.phase = Phase.INTERVIEW
+    engine.save_state(state)
+    next_phase = engine.advance(state)
+    assert next_phase == Phase.HUMAN_PAUSE
 
 
 def test_engine_human_pause_on_max_retries(engine: PipelineEngine, tmp_path: Path):
