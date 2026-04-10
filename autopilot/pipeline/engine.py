@@ -179,7 +179,17 @@ class PipelineEngine:
         if sys.stdout.isatty():
             from autopilot.ui.progress import PhaseProgress
             docs_path = ctx.docs_path if state.phase in (Phase.DOC_GEN, Phase.DELIVERY) else None
-            progress = PhaseProgress(state.phase.value, docs_path=docs_path)
+            feature_progress: tuple[int, int] | None = None
+            if state.current_feature_id:
+                fl_p = FeatureList.load(self.autopilot_dir / "feature_list.json")
+                done_p = sum(1 for f in fl_p.features if f.status == "completed")
+                feature_progress = (done_p, len(fl_p.features))
+            progress = PhaseProgress(
+                state.phase.value,
+                docs_path=docs_path,
+                feature_progress=feature_progress,
+                feature_title=feature.title if feature else None,
+            )
             progress.start()
 
         try:
@@ -366,12 +376,42 @@ class PipelineEngine:
             if f.id == state.current_feature_id:
                 f.status = "completed"
         fl.save(self.autopilot_dir / "feature_list.json")
+        done_count = sum(1 for feat in fl.features if feat.status == "completed")
+        self._update_progress_section(fl, done_count)
         if self.notifier:
-            fl_updated = FeatureList.load(self.autopilot_dir / "feature_list.json")
-            done_count = sum(1 for feat in fl_updated.features if feat.status == "completed")
             self.notifier.send_feature_done(
                 title=state.current_feature_id or "",
                 elapsed=time.monotonic() - start_time,
-                progress=(done_count, len(fl_updated.features)),
+                progress=(done_count, len(fl.features)),
             )
         state.current_feature_id = None
+
+    def _update_progress_section(self, fl: FeatureList, done_count: int) -> None:
+        """Write/replace the auto-maintained progress section in project-overview.md."""
+        overview_path = self.autopilot_dir / "docs" / "00-overview" / "project-overview.md"
+        if not overview_path.exists():
+            return
+        total = len(fl.features)
+        lines = [
+            "",
+            "---",
+            "",
+            "## 自动化开发进度（实时更新）",
+            "",
+            f"**进度：{done_count} / {total} 功能已完成**",
+            "",
+            "| 功能 ID | 标题 | 状态 |",
+            "|--------|------|------|",
+        ]
+        for feat in fl.features:
+            status = "✅ 已完成" if feat.status == "completed" else "⏳ 待开发"
+            lines.append(f"| {feat.id} | {feat.title} | {status} |")
+
+        section = "\n".join(lines) + "\n"
+        marker = "\n## 自动化开发进度（实时更新）"
+        content = overview_path.read_text(encoding="utf-8")
+        if marker in content:
+            content = content[: content.index(marker)] + section
+        else:
+            content = content.rstrip() + "\n" + section
+        overview_path.write_text(content, encoding="utf-8")

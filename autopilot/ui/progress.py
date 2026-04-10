@@ -26,12 +26,20 @@ class PhaseProgress:
     """Renders live terminal progress while a pipeline phase runs in a subprocess.
 
     DOC_GEN/DELIVERY: shows a progress bar tracking how many docs have been written.
-    Other phases: shows a spinner with phase name and elapsed time.
+    Other phases: shows a spinner with phase name, feature progress, and elapsed time.
     """
 
-    def __init__(self, phase_name: str, docs_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        phase_name: str,
+        docs_path: Path | None = None,
+        feature_progress: tuple[int, int] | None = None,
+        feature_title: str | None = None,
+    ) -> None:
         self.phase_name = phase_name
         self.docs_path = docs_path
+        self.feature_progress = feature_progress  # (done, total)
+        self.feature_title = feature_title
         self._doc_list = _DOC_PHASE_LISTS.get(phase_name) if docs_path else None
         self._is_doc_gen = self._doc_list is not None
         self._stop = threading.Event()
@@ -59,7 +67,7 @@ class PhaseProgress:
         total = len(self._doc_list or [])
         progress = Progress(
             SpinnerColumn(),
-            TextColumn("[bold cyan]DOC_GEN"),
+            TextColumn(f"[bold cyan]{self.phase_name}"),
             BarColumn(bar_width=28),
             TextColumn("[bold white]{task.completed}[/]/[dim]{task.total}[/] 文档"),
             TextColumn("[dim]{task.fields[current_file]}"),
@@ -78,17 +86,29 @@ class PhaseProgress:
             progress.update(task, completed=done, current_file=latest)
 
     def _render_spinner(self) -> None:
+        # Build description: "CODE [36/49] 数据库Schema..." (truncated)
+        desc = self._build_description()
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[bold cyan]{task.description}"),
             TimeElapsedColumn(),
             console=self._console,
         )
-        task = progress.add_task(self.phase_name, total=None)
+        task = progress.add_task(desc, total=None)
 
         with Live(progress, console=self._console, refresh_per_second=4):
             while not self._stop.is_set():
                 time.sleep(0.25)
+
+    def _build_description(self) -> str:
+        parts = [self.phase_name]
+        if self.feature_progress:
+            done, total = self.feature_progress
+            parts.append(f"[{done}/{total}]")
+        if self.feature_title:
+            title = self.feature_title[:40] + "…" if len(self.feature_title) > 40 else self.feature_title
+            parts.append(title)
+        return " ".join(parts)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
