@@ -421,7 +421,7 @@ After `ap init`, your project gets a `.autopilot/` directory:
 ├── state.json                    ← current pipeline state (auto-managed)
 ├── feature_list.json             ← feature backlog (auto-managed)
 ├── run_result.json               ← last run summary
-├── answers.json                  ← INTERVIEW answers
+├── answers.json                  ← preset decisions injected into all agent prompts (manually filled)
 ├── requirements/                 ← put your requirement files here
 │   └── main.md
 ├── docs/
@@ -906,7 +906,7 @@ enabled = false
 ├── state.json                    ← 流水线当前状态（自动管理）
 ├── feature_list.json             ← Feature Backlog（自动管理）
 ├── run_result.json               ← 上次运行摘要
-├── answers.json                  ← INTERVIEW 回答
+├── answers.json                  ← 预设技术决策（注入所有 Agent prompt，需手动填写）
 ├── requirements/                 ← 在此放置需求文件
 │   └── main.md
 ├── docs/

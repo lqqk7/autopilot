@@ -65,6 +65,17 @@ def run(backend: str | None, model: str | None, log_level: str | None) -> None:
     engine.run()
 
 
+def _try_extract_interview_decisions(autopilot_dir: "Path") -> None:
+    """从 INTERVIEW.md 提取技术决策并合并到 answers.json（静默失败）。"""
+    try:
+        from autopilot.agents.interview_extractor import merge_into_answers_json
+        count = merge_into_answers_json(autopilot_dir)
+        if count:
+            click.echo(f"✓ 已从 INTERVIEW.md 提取 {count} 条技术决策 → answers.json")
+    except Exception:
+        pass  # 提取失败不阻断主流程
+
+
 @main.command()
 def resume() -> None:
     """Resume from last checkpoint."""
@@ -87,9 +98,13 @@ def resume() -> None:
         if state.current_feature_id or state.active_feature_ids:
             next_phase = Phase.DEV_LOOP
         elif state.post_interview_phase is not None:
+            # ap add --from-requirements 场景：INTERVIEW → PLANNING
             next_phase = state.post_interview_phase
+            _try_extract_interview_decisions(autopilot_dir)
         elif state.pause_reason and "interview" in (state.pause_reason or "").lower():
+            # 正常首跑场景：INTERVIEW → DOC_GEN
             next_phase = Phase.DOC_GEN
+            _try_extract_interview_decisions(autopilot_dir)
         else:
             next_phase = Phase.DOC_GEN
         state.phase = next_phase
