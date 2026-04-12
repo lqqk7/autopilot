@@ -409,6 +409,21 @@ allow_dangerous_permissions = true
 enabled = false
 ```
 
+**Setting environment variables:**
+
+Since `ap` is a global CLI tool, it does **not** load a project-level `.env` file. Set the variables in your shell profile so they are available in every session:
+
+- **macOS / Linux** — add to `~/.zshrc` (or `~/.bashrc`):
+  ```bash
+  export AUTOPILOT_TELEGRAM_TOKEN="<your-bot-token>"
+  export AUTOPILOT_TELEGRAM_CHAT_ID="<your-chat-id>"
+  ```
+  Then reload: `source ~/.zshrc`
+
+- **Windows** — set via System Properties → Environment Variables, or in your PowerShell profile.
+
+> 💡 Get your bot token from [@BotFather](https://t.me/BotFather). To find your chat ID, send a message to your bot then check `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+
 ---
 
 ### Project Structure
@@ -893,6 +908,21 @@ allow_dangerous_permissions = true
 #   AUTOPILOT_TELEGRAM_CHAT_ID — 目标聊天或群组 ID
 enabled = false
 ```
+
+**配置环境变量：**
+
+`ap` 是全局 CLI 工具，**不会**自动加载项目级 `.env` 文件。需要将变量写入 Shell 配置文件，确保每次终端会话都可用：
+
+- **macOS / Linux** — 添加到 `~/.zshrc`（或 `~/.bashrc`）：
+  ```bash
+  export AUTOPILOT_TELEGRAM_TOKEN="<your-bot-token>"
+  export AUTOPILOT_TELEGRAM_CHAT_ID="<your-chat-id>"
+  ```
+  然后重新加载：`source ~/.zshrc`
+
+- **Windows** — 通过「系统属性 → 环境变量」设置，或写入 PowerShell 配置文件。
+
+> 💡 Bot Token 从 [@BotFather](https://t.me/BotFather) 获取。Chat ID 的查找方式：先给 Bot 发一条消息，再访问 `https://api.telegram.org/bot<TOKEN>/getUpdates` 查看返回结果。
 
 ---
 
