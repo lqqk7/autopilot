@@ -13,6 +13,7 @@ from autopilot.knowledge.local import LocalKnowledge
 from autopilot.pipeline.config import PipelineConfig
 from autopilot.pipeline.context import AgentOutput, Feature, Phase
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, handle_error
+from autopilot.sessions.recorder import SessionRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class FeatureWorker:
         project_path: Path,
         config: PipelineConfig | None = None,
         review_backend: BackendBase | None = None,
+        recorder: SessionRecorder | None = None,
     ) -> None:
         self.feature = feature
         self.backend = backend
@@ -62,6 +64,7 @@ class FeatureWorker:
         self._cfg = config or PipelineConfig()
         # None = use self.backend for review (self / fallback)
         self._review_backend = review_backend
+        self._recorder = recorder
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
         self.artifacts: list[str] = []
@@ -72,7 +75,9 @@ class FeatureWorker:
 
     def run(self) -> bool:
         """Execute the full feature cycle. Returns True on success."""
+        _feature_start = time.monotonic()
         phase = Phase.CODE
+        success = False
 
         while True:
             passed = self._run_single_phase(phase)
@@ -80,19 +85,30 @@ class FeatureWorker:
             next_phase = _TRANSITIONS.get((phase, passed))
             if next_phase is None:
                 logger.error("[%s] No transition for (%s, passed=%s)", self.feature.id, phase, passed)
-                return False
+                break
 
             if next_phase == Phase.DEV_LOOP:
                 logger.info("[%s] Feature complete", self.feature.id)
-                return True
+                success = True
+                break
 
             if next_phase == Phase.FIX:
                 self.fix_retries += 1
                 if self.fix_retries > self._cfg.max_fix_retries:
                     logger.warning("[%s] Max fix retries exceeded", self.feature.id)
-                    return False
+                    break
 
             phase = next_phase
+
+        if self._recorder:
+            self._recorder.feature_done(
+                feature_id=self.feature.id,
+                title=self.feature.title,
+                success=success,
+                duration_s=time.monotonic() - _feature_start,
+                fix_retries=self.fix_retries,
+            )
+        return success
 
     def _active_backend(self, phase: Phase) -> BackendBase:
         """Return the backend to use for this phase."""
@@ -125,6 +141,17 @@ class FeatureWorker:
 
         while True:
             result = active.run(agent_name, prompt, ctx, timeout=timeout)
+
+            if self._recorder:
+                self._recorder.agent_call(
+                    phase=phase.value,
+                    agent_name=agent_name,
+                    backend_name=self.current_backend_name,
+                    result=result,
+                    feature_id=self.feature.id,
+                    local_retry=local_retry,
+                    prompt=prompt,
+                )
 
             if result.success:
                 parsed = self._parse_output(result, local_retry)

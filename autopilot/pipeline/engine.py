@@ -23,6 +23,7 @@ from autopilot.pipeline.context import AgentOutput, Feature, FeatureList, Phase,
 from autopilot.pipeline.phases import DELIVERY_DOCS, ExitCondition, PhaseRunner
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, exponential_backoff, handle_error
 from autopilot.pipeline.worker import FeatureWorker
+from autopilot.sessions.recorder import SessionRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class PipelineEngine:
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
         self._overview_lock = threading.Lock()
+        self._recorder: SessionRecorder | None = None
 
     def state_path(self) -> Path:
         return self.autopilot_dir / "state.json"
@@ -127,6 +129,8 @@ class PipelineEngine:
         logger.warning("Backend switch: %s → %s (reason: %s)", old_name, self._backend_name, error_type)
         if self.notifier:
             self.notifier.send_backend_switch(old_name, self._backend_name, error_type.value)
+        if self._recorder:
+            self._recorder.backend_switch(old_name, self._backend_name, error_type.value)
         return True
 
     def check_pause(self, state: PipelineState) -> bool:
@@ -202,6 +206,16 @@ class PipelineEngine:
         try:
             while True:
                 result = self.backend.run(agent_name, prompt, ctx, timeout=phase_timeout)
+
+                if self._recorder:
+                    self._recorder.agent_call(
+                        phase=state.phase.value,
+                        agent_name=agent_name,
+                        backend_name=self._backend_name,
+                        result=result,
+                        local_retry=local_retry,
+                        prompt=prompt,
+                    )
 
                 if result.success:
                     parsed = self._try_parse_output(result, state, local_retry)
@@ -336,6 +350,27 @@ class PipelineEngine:
         logger.info("Starting pipeline at phase: %s", state.phase)
         start_time = self._run_start
 
+        self._recorder = SessionRecorder(self.autopilot_dir / "sessions")
+        self._recorder.session_start(
+            backend=self._backend_name,
+            phase=state.phase.value,
+            max_parallel=self._max_parallel,
+        )
+
+        try:
+            self._run_loop(state, start_time)
+        finally:
+            fl = self._load_feature_list()
+            fd = sum(1 for f in fl.features if f.status == "completed") if fl else 0
+            ft = len(fl.features) if fl else 0
+            self._recorder.session_end(
+                final_phase=state.phase.value,
+                elapsed_s=time.monotonic() - self._run_start,
+                features_done=fd,
+                features_total=ft,
+            )
+
+    def _run_loop(self, state: PipelineState, start_time: float) -> None:
         while state.phase not in (Phase.DONE, Phase.HUMAN_PAUSE):
             if self.check_pause(state):
                 failed_phase = state.phase
@@ -351,7 +386,12 @@ class PipelineEngine:
                 self._handle_dev_loop(state)
                 continue
 
+            if self._recorder:
+                self._recorder.phase_enter(state.phase.value)
+            _phase_t0 = time.monotonic()
             passed = self.run_phase(state)
+            if self._recorder:
+                self._recorder.phase_exit(state.phase.value, passed, time.monotonic() - _phase_t0)
             if passed:
                 self._on_phase_passed(state, start_time)
                 # INTERVIEW done → pause for human to fill in answers
@@ -477,7 +517,7 @@ class PipelineEngine:
                         type(backend).__name__,
                         type(review_backend).__name__ if review_backend else "self",
                     )
-                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend)
+                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend, recorder=self._recorder)
                     with workers_lock:
                         active_workers.append(worker)
                     try:

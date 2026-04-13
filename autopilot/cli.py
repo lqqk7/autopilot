@@ -336,6 +336,62 @@ def redo_feature(feature_id: str, and_dependents: bool) -> None:
 
 
 @main.group()
+def sessions() -> None:
+    """Inspect past pipeline sessions."""
+
+
+@sessions.command(name="list")
+def sessions_list() -> None:
+    """List all recorded sessions."""
+    from pathlib import Path
+    from autopilot.sessions.reader import list_sessions, format_list
+
+    sessions_dir = Path.cwd() / ".autopilot" / "sessions"
+    click.echo(format_list(list_sessions(sessions_dir)))
+
+
+@sessions.command(name="show")
+@click.argument("session_id")
+@click.option("--feature", "feature_id", default=None, help="Filter to a specific feature ID")
+@click.option("--output", "show_output", is_flag=True, default=False, help="Show agent output tails")
+def sessions_show(session_id: str, feature_id: str | None, show_output: bool) -> None:
+    """Show detailed timeline for a session.
+
+    Use 'latest' to show the most recent session.
+    Prefix matching is supported (first 8 chars are enough).
+    """
+    from pathlib import Path
+    from autopilot.sessions.reader import list_sessions, format_show
+
+    sessions_dir = Path.cwd() / ".autopilot" / "sessions"
+
+    if session_id == "latest":
+        all_sessions = list_sessions(sessions_dir)
+        if not all_sessions:
+            click.echo("No sessions found.")
+            return
+        path = all_sessions[0]["path"]
+    else:
+        exact = sessions_dir / f"{session_id}.jsonl"
+        if exact.exists():
+            path = exact
+        else:
+            matches = list(sessions_dir.glob(f"{session_id}*.jsonl")) if sessions_dir.exists() else []
+            if len(matches) == 1:
+                path = matches[0]
+            elif not matches:
+                click.echo(f"Session not found: {session_id}", err=True)
+                raise SystemExit(1)
+            else:
+                click.echo(f"Ambiguous session ID prefix '{session_id}', matches:", err=True)
+                for m in matches:
+                    click.echo(f"  {m.stem}", err=True)
+                raise SystemExit(1)
+
+    click.echo(format_show(path, feature_filter=feature_id, show_output=show_output))
+
+
+@main.group()
 def knowledge() -> None:
     """Manage knowledge base."""
 
