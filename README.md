@@ -80,29 +80,36 @@ Requirements (.autopilot/requirements/)
 
 ### Installation
 
-**Requirements:** Python 3.12+, [uv](https://github.com/astral-sh/uv), and at least one AI backend installed.
+**Requirements:** Python 3.12+, and at least one AI backend installed.
 
-#### Install uv (if you haven't)
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-#### Option 1 — Install as a global tool (recommended)
+#### Option 1 — pip (recommended)
 
 ```bash
-uv tool install git+https://github.com/lqqk7/autopilot.git
+pip install autopilot-ai
 ```
 
-This installs the `ap` command globally and keeps it isolated — no virtualenv management needed.
+#### Option 2 — uv tool
 
-#### Option 2 — Install from source (for development / hacking)
+```bash
+uv tool install autopilot-ai
+```
+
+Installs the `ap` command globally, isolated — no virtualenv management needed.
+
+#### Option 3 — Install from source (for development / hacking)
 
 ```bash
 git clone https://github.com/lqqk7/autopilot.git
 cd autopilot
 uv sync
 uv pip install -e .
+```
+
+#### Updating
+
+```bash
+pip install -U autopilot-ai          # pip
+uv tool upgrade autopilot-ai         # uv tool
 ```
 
 #### Backend prerequisites
@@ -695,29 +702,36 @@ Autopilot 是一个 Python CLI 工具，驱动 AI 编码智能体（Claude Code�
 
 ### 安装
 
-**前置要求：** Python 3.12+、[uv](https://github.com/astral-sh/uv)，以及至少一个 AI 后端工具。
+**前置要求：** Python 3.12+，以及至少一个 AI 后端工具。
 
-#### 安装 uv（如果还没装）
+#### 方式一 — pip（推荐）
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install autopilot-ai
 ```
 
-#### 方式一 — 安装为全局工具（推荐）
+#### 方式二 — uv tool
 
 ```bash
-uv tool install git+https://github.com/lqqk7/autopilot.git
+uv tool install autopilot-ai
 ```
 
 一条命令装好 `ap` 命令，全局可用，无需手动管理虚拟环境。
 
-#### 方式二 — 从源码安装（用于二次开发）
+#### 方式三 — 从源码安装（用于二次开发）
 
 ```bash
 git clone https://github.com/lqqk7/autopilot.git
 cd autopilot
 uv sync
 uv pip install -e .
+```
+
+#### 更新
+
+```bash
+pip install -U autopilot-ai          # pip
+uv tool upgrade autopilot-ai         # uv tool
 ```
 
 #### 后端前置条件
