@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -74,6 +75,7 @@ class PipelineEngine:
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
         self._overview_lock = threading.Lock()
+        self._git_lock = threading.Lock()
         self._recorder: SessionRecorder | None = None
 
     def state_path(self) -> Path:
@@ -574,12 +576,17 @@ class PipelineEngine:
                     results.append((fid, ok, arts))
                     self._collected_artifacts.extend(arts)
                     # Always update feature status — leaving it "pending" on failure causes infinite re-runs
+                    completed_feature: Feature | None = None
                     for f in fl.features:
                         if f.id == fid:
                             f.status = "completed" if ok else "failed"
+                            if ok:
+                                completed_feature = f
                             break
                     if ok:
                         completed_ids.add(fid)
+                        if completed_feature is not None:
+                            self._auto_commit_feature(completed_feature)
                     fl.save(fl_path)
                     done_count = sum(1 for f in fl.features if f.status == "completed")
                     self._update_progress_section(fl, done_count)
@@ -611,6 +618,32 @@ class PipelineEngine:
         state.active_feature_ids = []
         state.current_feature_id = None
         self.save_state(state)
+
+    def _auto_commit_feature(self, feature: Feature) -> None:
+        """Git-commit the working tree after a feature passes REVIEW."""
+        if not self._cfg.auto_commit:
+            return
+        try:
+            with self._git_lock:
+                status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    capture_output=True, text=True, cwd=self.project_path,
+                )
+                if not status.stdout.strip():
+                    logger.debug("[%s] auto-commit: nothing to commit", feature.id)
+                    return
+                subprocess.run(
+                    ["git", "add", "."],
+                    capture_output=True, cwd=self.project_path, check=True,
+                )
+                msg = f"feat: [{feature.id}] {feature.title}"
+                subprocess.run(
+                    ["git", "commit", "-m", msg],
+                    capture_output=True, cwd=self.project_path, check=True,
+                )
+                logger.info("[%s] auto-committed: %s", feature.id, msg)
+        except Exception as exc:
+            logger.warning("[%s] auto-commit failed (skipped): %s", feature.id, exc)
 
     def _backend_pool(self) -> list[BackendBase]:
         """Return the backend pool for round-robin worker assignment."""

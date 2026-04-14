@@ -53,6 +53,11 @@ log_level = "INFO"
 #   opencode → "anthropic/claude-opus-4-6" | "openai/o3"
 model = ""
 
+# Auto-commit each feature to git after it passes REVIEW.
+# Commit message: "feat: [feat-xxx] <feature title>"
+# Set to false to disable (e.g. if you manage commits manually).
+auto_commit = true
+
 
 [autopilot.review]
 # Review mode:

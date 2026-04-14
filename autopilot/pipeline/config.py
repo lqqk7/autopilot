@@ -85,6 +85,10 @@ class PipelineConfig:
     # Send Telegram notifications on key events (phase done, pause, feature done).
     # Requires env vars: AUTOPILOT_TELEGRAM_TOKEN and AUTOPILOT_TELEGRAM_CHAT_ID.
     telegram_enabled: bool = False
+    # Auto-commit each feature to git when it passes REVIEW.
+    # Commit message format: "feat: [feat-xxx] <feature title>"
+    # Disabled automatically when not in a git repository.
+    auto_commit: bool = True
 
     def timeout_for(self, phase: Phase) -> int:
         return self.phase_timeouts.get(phase, _DEFAULT_TIMEOUT_FALLBACK)
@@ -118,4 +122,5 @@ class PipelineConfig:
             review=ReviewConfig.from_toml(ap_cfg.get("review", {})),
             allow_dangerous_permissions=bool(ap_cfg.get("permissions", {}).get("allow_dangerous_permissions", True)),
             telegram_enabled=bool(ap_cfg.get("notifications", {}).get("enabled", False)),
+            auto_commit=bool(ap_cfg.get("auto_commit", True)),
         )

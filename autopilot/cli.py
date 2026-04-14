@@ -275,17 +275,26 @@ def add_feature(title_or_reqfile: str, phase: str, depends_on: str, test_file: s
 
 
 @main.command(name="redo")
-@click.argument("feature_id")
+@click.argument("feature_id", required=False, default=None)
 @click.option("--and-dependents", "and_dependents", is_flag=True, default=False,
               help="Also reset features that depend on this one")
-def redo_feature(feature_id: str, and_dependents: bool) -> None:
+@click.option("--failed", "failed", is_flag=True, default=False,
+              help="Reset ALL failed features to pending")
+def redo_feature(feature_id: str | None, and_dependents: bool, failed: bool) -> None:
     """Re-run a specific feature (reset to pending and resume).
 
-    Example: ap redo feat-005
-             ap redo feat-005 --and-dependents
+    \b
+    Examples:
+      ap redo feat-005                     # redo a single feature
+      ap redo feat-005 --and-dependents    # redo + all features that depend on it
+      ap redo --failed                     # redo ALL failed features at once
     """
     from pathlib import Path
     from autopilot.pipeline.context import FeatureList, PipelineState, Phase
+
+    if not failed and feature_id is None:
+        click.echo("Error: provide a FEATURE_ID or use --failed to reset all failed features.", err=True)
+        raise SystemExit(1)
 
     autopilot_dir = Path.cwd() / ".autopilot"
     fl_path = autopilot_dir / "feature_list.json"
@@ -294,17 +303,23 @@ def redo_feature(feature_id: str, and_dependents: bool) -> None:
         raise SystemExit(1)
 
     fl = FeatureList.load(fl_path)
-    target_ids = {feature_id}
 
-    if and_dependents:
-        # Find all features that (transitively) depend on this one
-        changed = True
-        while changed:
-            changed = False
-            for f in fl.features:
-                if f.id not in target_ids and any(d in target_ids for d in f.depends_on):
-                    target_ids.add(f.id)
-                    changed = True
+    if failed:
+        target_ids = {f.id for f in fl.features if f.status == "failed"}
+        if not target_ids:
+            click.echo("No failed features found.")
+            return
+    else:
+        assert feature_id is not None
+        target_ids = {feature_id}
+        if and_dependents:
+            changed = True
+            while changed:
+                changed = False
+                for f in fl.features:
+                    if f.id not in target_ids and any(d in target_ids for d in f.depends_on):
+                        target_ids.add(f.id)
+                        changed = True
 
     reset_count = 0
     for f in fl.features:
@@ -333,6 +348,124 @@ def redo_feature(feature_id: str, and_dependents: bool) -> None:
     click.echo(f"✓ {reset_count} feature(s) reset to pending. Run `ap resume` to re-develop.")
 
 
+
+
+@main.command(name="check")
+def check() -> None:
+    """Pre-flight validation: verify autopilot is ready to run.
+
+    Checks: config validity, backend CLIs installed, git repo, env vars.
+    """
+    import shutil
+    import os
+    from pathlib import Path
+    import toml
+    from autopilot.pipeline.config import PipelineConfig
+
+    project_path = Path.cwd()
+    autopilot_dir = project_path / ".autopilot"
+
+    ok = True
+
+    def _pass(msg: str) -> None:
+        click.echo(f"  ✓  {msg}")
+
+    def _fail(msg: str) -> None:
+        nonlocal ok
+        ok = False
+        click.echo(f"  ✗  {msg}")
+
+    def _warn(msg: str) -> None:
+        click.echo(f"  ⚠  {msg}")
+
+    click.echo("=== autopilot pre-flight check ===\n")
+
+    # 1. .autopilot/ exists
+    click.echo("[1/5] Project structure")
+    if not autopilot_dir.exists():
+        _fail(".autopilot/ not found — run `ap init` first")
+        click.echo("\n✗ Pre-flight FAILED. Fix the issues above and re-run `ap check`.")
+        raise SystemExit(1)
+    _pass(".autopilot/ exists")
+
+    config_path = autopilot_dir / "config.toml"
+    if not config_path.exists():
+        _fail("config.toml not found")
+        ok = False
+    else:
+        _pass("config.toml exists")
+
+    state_path = autopilot_dir / "state.json"
+    _pass("state.json exists") if state_path.exists() else _warn("state.json not found (will be created on first run)")
+
+    req_dir = autopilot_dir / "requirements"
+    req_files = list(req_dir.glob("*.md")) + list(req_dir.glob("*.txt")) if req_dir.exists() else []
+    non_readme = [f for f in req_files if f.name.lower() != "readme.md"]
+    if non_readme:
+        _pass(f"requirements/ has {len(non_readme)} file(s)")
+    else:
+        _warn("requirements/ has no requirement files — add one before running `ap run`")
+
+    # 2. config.toml valid
+    click.echo("\n[2/5] Configuration")
+    ap_cfg: dict = {}
+    if config_path.exists():
+        try:
+            raw = toml.loads(config_path.read_text(encoding="utf-8"))
+            ap_cfg = raw.get("autopilot", {})
+            PipelineConfig.from_toml(ap_cfg)
+            _pass("config.toml parses OK")
+        except Exception as exc:
+            _fail(f"config.toml invalid: {exc}")
+
+    backend_name: str = ap_cfg.get("backend", "claude")
+    parallel_backends: list[str] = ap_cfg.get("parallel_backends", [])
+    all_backend_names = list({backend_name} | set(parallel_backends))
+
+    # 3. Backend CLIs
+    click.echo("\n[3/5] Backend CLIs")
+    CLI_MAP = {
+        "claude":    ("claude",    "Claude Code CLI"),
+        "codex":     ("codex",     "OpenAI Codex CLI"),
+        "opencode":  ("opencode",  "OpenCode CLI"),
+    }
+    for bn in all_backend_names:
+        cli_bin, cli_label = CLI_MAP.get(bn, (bn, bn))
+        if shutil.which(cli_bin):
+            _pass(f"{cli_label} (`{cli_bin}`) found in PATH")
+        else:
+            _fail(f"{cli_label} (`{cli_bin}`) not found — install it first")
+
+    # 4. Environment variables
+    click.echo("\n[4/5] Environment variables")
+    telegram_enabled = bool(ap_cfg.get("notifications", {}).get("enabled", False))
+    if telegram_enabled:
+        for var in ("AUTOPILOT_TELEGRAM_TOKEN", "AUTOPILOT_TELEGRAM_CHAT_ID"):
+            if os.environ.get(var):
+                _pass(f"{var} set")
+            else:
+                _fail(f"{var} not set (required — Telegram notifications are enabled)")
+    else:
+        _pass("Telegram disabled — no env vars needed")
+
+    # 5. Git repo
+    click.echo("\n[5/5] Git repository")
+    git_dir = project_path / ".git"
+    if git_dir.exists():
+        _pass(".git/ found — auto-commit will work")
+    else:
+        auto_commit = ap_cfg.get("auto_commit", True)
+        if auto_commit:
+            _warn(".git/ not found — auto_commit is enabled but this is not a git repo (will be skipped at runtime)")
+        else:
+            _pass("Not a git repo, but auto_commit = false — OK")
+
+    click.echo("")
+    if ok:
+        click.echo("✓ Pre-flight passed. You're good to go — run `ap run`.")
+    else:
+        click.echo("✗ Pre-flight FAILED. Fix the issues above and re-run `ap check`.")
+        raise SystemExit(1)
 
 
 @main.group()
