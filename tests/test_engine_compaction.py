@@ -45,12 +45,10 @@ def test_proactive_compaction_triggered(tmp_path: Path) -> None:
 
     state = PipelineState(phase=Phase.DOC_GEN)
 
-    with patch("autopilot.knowledge.compactor.KnowledgeCompactor") as mock_cls:
-        mock_compactor = MagicMock()
-        mock_cls.return_value = mock_compactor
-        mock_compactor.needs_compaction.return_value = True
-        mock_compactor.compact.return_value = "compressed"
-
+    mock_compactor = MagicMock()
+    mock_compactor.needs_compaction.return_value = True
+    mock_compactor.compact.return_value = "compressed"
+    with patch.object(engine, "_compactor", mock_compactor):
         result = engine.run_phase(state)
 
     assert result is True
@@ -161,15 +159,13 @@ def test_run_result_compactions_nonzero_after_actual_compaction(tmp_path: Path) 
     )
     engine = PipelineEngine(project_path=tmp_path, backend=mock_backend)
 
+    mock_compactor = MagicMock()
+    mock_compactor.needs_compaction.return_value = True
+    mock_compactor.compact.return_value = "compressed"
     with (
-        patch("autopilot.knowledge.compactor.KnowledgeCompactor") as mock_cls,
+        patch.object(engine, "_compactor", mock_compactor),
         patch.object(engine, "advance", return_value=Phase.DONE),
     ):
-        mock_compactor = MagicMock()
-        mock_cls.return_value = mock_compactor
-        mock_compactor.needs_compaction.return_value = True
-        mock_compactor.compact.return_value = "compressed"
-
         engine.run()
 
     data = json.loads((autopilot_dir / "run_result.json").read_text())

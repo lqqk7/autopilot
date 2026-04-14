@@ -101,12 +101,13 @@ def test_engine_writes_run_result_on_done(tmp_path: Path) -> None:
 def test_engine_writes_run_result_on_human_pause(tmp_path: Path) -> None:
     from autopilot.backends.base import BackendBase, BackendResult, RunContext
     from autopilot.pipeline.context import Phase, PipelineState
-    from autopilot.pipeline.engine import MAX_FIX_RETRIES, PipelineEngine
+    from autopilot.pipeline.config import PipelineConfig
+    from autopilot.pipeline.engine import PipelineEngine
 
     autopilot_dir = _make_autopilot_dir(tmp_path)
 
-    # Seed state with retries maxed → check_pause() uses MAX_FIX_RETRIES
-    state = PipelineState(phase=Phase.DOC_GEN, phase_retries=MAX_FIX_RETRIES)
+    # Seed state with retries maxed → check_pause() triggers when phase_retries >= max_phase_retries
+    state = PipelineState(phase=Phase.DOC_GEN, phase_retries=PipelineConfig().max_phase_retries)
     state.save(autopilot_dir / "state.json")
 
     mock_backend = MagicMock(spec=BackendBase)

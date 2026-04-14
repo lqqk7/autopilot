@@ -44,7 +44,7 @@ def test_codex_run_success(ctx: RunContext):
     assert result.success is True
     cmd = mock_run.call_args[0][0]
     assert "codex" in cmd
-    assert "--approval-mode" in cmd
+    assert "--dangerously-bypass-approvals-and-sandbox" in cmd
 
 
 def test_opencode_run_success(ctx: RunContext):
