@@ -7,6 +7,18 @@ from autopilot.backends.base import RunContext
 
 AGENTS_DIR = Path(__file__).parent
 
+WORKSPACE_RULES = """
+---
+
+## 工作规范
+
+**严禁在项目根目录创建任何文件。** 包括但不限于：
+- 临时笔记（`task_plan.md`、`findings.md`、`progress.md` 等）
+- 调试输出、日志、报告
+
+如必须创建临时工作文件，只能写入 `.autopilot/` 目录下。
+"""
+
 OUTPUT_PROTOCOL = """
 ---
 
@@ -88,5 +100,6 @@ class AgentLoader:
         if answers_md:
             injections.append(answers_md)
 
+        injections.append(WORKSPACE_RULES)
         injections.append(OUTPUT_PROTOCOL)
         return base + "\n\n" + "\n\n".join(injections)
