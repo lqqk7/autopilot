@@ -26,7 +26,7 @@ from autopilot.tui.widgets.feature_table import FeatureRow, FeatureTable
 from autopilot.tui.widgets.log_panel import LogPanel
 from autopilot.tui.widgets.status_bar import StatusBar
 
-_LOGO = "[bold cyan]autopilot[/bold cyan] [dim]v0.3.0[/dim]"
+_LOGO = "[bold cyan]autopilot[/bold cyan] [dim]v0.3.1[/dim]"
 
 
 class AutopilotApp(App):
