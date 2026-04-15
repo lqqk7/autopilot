@@ -219,6 +219,7 @@ Opens a full-screen interactive terminal dashboard. Type `/run` to start the pip
 | `/redo [ID\|--failed]` | Re-run specific feature(s) |
 | `/status` | Show pipeline state |
 | `/sessions` | List recorded sessions |
+| `/lang [en\|zh]` | Switch display language |
 | `/help` | Show all commands |
 | `/quit` | Exit |
 
@@ -490,6 +491,10 @@ log_level = "INFO"
 # codex:     "o3" | "o4-mini" | "gpt-4o"
 # opencode:  "anthropic/claude-opus-4-6" | "openai/o3"
 model = ""
+
+# TUI display language: "en" (default) or "zh" (Chinese).
+# Can also be changed at runtime with /lang inside the TUI.
+language = "en"
 ```
 
 #### `[autopilot.review]` — Review Mode
@@ -864,6 +869,7 @@ autopilot
 | `/redo [ID\|--failed]` | 重跑指定 Feature |
 | `/status` | 显示当前流水线状态 |
 | `/sessions` | 列出所有 Session 记录 |
+| `/lang [en\|zh]` | 切换显示语言 |
 | `/help` | 显示所有命令 |
 | `/quit` | 退出 |
 
@@ -1099,6 +1105,10 @@ log_level = "INFO"
 # codex:     "o3" | "o4-mini" | "gpt-4o"
 # opencode:  "anthropic/claude-opus-4-6" | "openai/o3"
 model = ""
+
+# TUI 显示语言："en"（默认）或 "zh"（中文）。
+# 也可在 TUI 运行时通过 /lang 命令切换。
+language = "en"
 ```
 
 #### `[autopilot.review]` — Review 模式
