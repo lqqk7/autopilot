@@ -10,6 +10,13 @@ from autopilot.backends.base import ErrorType
 from autopilot.backends.codex import CodexBackend
 
 
+def _make_mock_popen(returncode=0, stdout="", stderr=""):
+    mock = MagicMock()
+    mock.returncode = returncode
+    mock.communicate.return_value = (stdout, stderr)
+    return mock
+
+
 @pytest.fixture
 def backend() -> CodexBackend:
     return CodexBackend()
@@ -67,29 +74,26 @@ def test_classify_unknown_nonzero(backend: CodexBackend) -> None:
 # run() 集成测试
 
 def test_run_timeout_sets_error_type(backend: CodexBackend, ctx) -> None:
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
+    mock = _make_mock_popen()
+    mock.communicate.side_effect = [
+        subprocess.TimeoutExpired(cmd="codex", timeout=300),
+        ("", ""),
+    ]
+    with patch("subprocess.Popen", return_value=mock):
         result = backend.run("agent", "prompt", ctx)
     assert result.success is False
     assert result.error_type == ErrorType.timeout
 
 
 def test_run_success_no_error_type(backend: CodexBackend, ctx) -> None:
-    mock_proc = MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.stdout = "done"
-    mock_proc.stderr = ""
-    with patch("subprocess.run", return_value=mock_proc):
+    with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=0, stdout="done")):
         result = backend.run("agent", "prompt", ctx)
     assert result.success is True
     assert result.error_type is None
 
 
 def test_run_nonzero_unknown(backend: CodexBackend, ctx) -> None:
-    mock_proc = MagicMock()
-    mock_proc.returncode = 1
-    mock_proc.stdout = ""
-    mock_proc.stderr = "something went wrong"
-    with patch("subprocess.run", return_value=mock_proc):
+    with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="something went wrong")):
         result = backend.run("agent", "prompt", ctx)
     assert result.success is False
     assert result.error_type == ErrorType.unknown

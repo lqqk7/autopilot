@@ -19,6 +19,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from autopilot.backends.base import BackendBase
 from autopilot.tui.commands import COMMANDS, completions_for, lookup, parse
 from autopilot.tui.event_bus import EventBus
 from autopilot.tui.i18n import get_language, set_language, t
@@ -90,6 +91,7 @@ class AutopilotApp(App):
         self._pipeline_thread: threading.Thread | None = None
         self._pipeline_running = False
         self._quit_confirmed = False
+        self._active_backends: list[BackendBase] = []
 
     # ── layout ────────────────────────────────────────────────────────────────
 
@@ -313,10 +315,22 @@ class AutopilotApp(App):
             self._quit_confirmed = True
             self._log(t("quit_warning"), "warning")
             return
+        self._stop_pipeline()
         self.exit()
 
     def _cmd_exit(self, args: list[str]) -> None:
         self._cmd_quit(args)
+
+    def action_quit(self) -> None:
+        """Override Textual's built-in quit (Ctrl+C) to kill subprocesses first."""
+        self._stop_pipeline()
+        self.exit()
+
+    def _stop_pipeline(self) -> None:
+        """Send SIGKILL to every active backend subprocess, then clear the list."""
+        for backend in self._active_backends:
+            backend.stop()
+        self._active_backends.clear()
 
     def _cmd_init(self, args: list[str]) -> None:
         log = self.query_one(LogPanel)
@@ -787,6 +801,8 @@ class AutopilotApp(App):
                 get_backend(n, model=pipeline_config.model, allow_dangerous=allow)
                 for n in ap_cfg.get("parallel_backends", [])
             ]
+            # Store refs so _stop_pipeline() can kill in-flight subprocesses on /quit
+            self._active_backends = [backend] + parallel_backends
 
             if resume:
                 state = PipelineState.load(autopilot_dir / "state.json")
@@ -808,6 +824,8 @@ class AutopilotApp(App):
             engine.run()
         except Exception as exc:
             self._event_bus.emit("pipeline_error", message=str(exc))
+        finally:
+            self._active_backends.clear()
 
     # ── keybinding actions ────────────────────────────────────────────────────
 

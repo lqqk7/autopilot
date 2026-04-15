@@ -11,11 +11,11 @@ from autopilot.backends.claude_code import ClaudeCodeBackend
 from autopilot.backends.base import RunContext
 
 
-def _make_mock_process(returncode=0, stdout="", stderr=""):
+def _make_mock_popen(returncode=0, stdout="", stderr=""):
+    """Return a Popen mock whose communicate() yields (stdout, stderr)."""
     mock = MagicMock()
     mock.returncode = returncode
-    mock.stdout = stdout
-    mock.stderr = stderr
+    mock.communicate.return_value = (stdout, stderr)
     return mock
 
 
@@ -68,39 +68,59 @@ class TestClassifyError:
 
 class TestRunIntegration:
     def test_rate_limit_from_run(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=1, stderr="rate_limit hit")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="rate_limit hit")):
             result = backend.run("agent", "prompt", ctx)
         assert not result.success
         assert result.error_type == ErrorType.rate_limit
 
     def test_quota_from_run(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=1, stderr="quota exceeded")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="quota exceeded")):
             result = backend.run("agent", "prompt", ctx)
         assert result.error_type == ErrorType.quota_exhausted
 
     def test_context_overflow_from_run(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=1, stderr="context window too long")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="context window too long")):
             result = backend.run("agent", "prompt", ctx)
         assert result.error_type == ErrorType.context_overflow
 
     def test_server_error_from_run(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=1, stderr="Internal Server Error 500")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="Internal Server Error 500")):
             result = backend.run("agent", "prompt", ctx)
         assert result.error_type == ErrorType.server_error
 
     def test_timeout_from_run(self, backend, ctx):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300)):
+        mock = _make_mock_popen()
+        # First communicate() times out; second (after kill) returns normally
+        mock.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="claude", timeout=300),
+            ("", ""),
+        ]
+        with patch("subprocess.Popen", return_value=mock):
             result = backend.run("agent", "prompt", ctx)
         assert not result.success
         assert result.error_type == ErrorType.timeout
 
     def test_unknown_from_run(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=1, stderr="some weird error")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=1, stderr="some weird error")):
             result = backend.run("agent", "prompt", ctx)
         assert result.error_type == ErrorType.unknown
 
     def test_success_no_error_type(self, backend, ctx):
-        with patch("subprocess.run", return_value=_make_mock_process(returncode=0, stdout="done")):
+        with patch("subprocess.Popen", return_value=_make_mock_popen(returncode=0, stdout="done")):
             result = backend.run("agent", "prompt", ctx)
         assert result.success
         assert result.error_type is None
+
+    def test_stop_kills_process(self, backend, ctx):
+        mock_proc = _make_mock_popen(returncode=0, stdout="done")
+        with patch("subprocess.Popen", return_value=mock_proc):
+            backend.stop()  # stop before run — should return stopped result
+            result = backend.run("agent", "prompt", ctx)
+        assert not result.success
+        assert result.error_type == ErrorType.stopped
+
+    def test_oserror_launch_failure(self, backend, ctx):
+        with patch("subprocess.Popen", side_effect=OSError("not found")):
+            result = backend.run("agent", "prompt", ctx)
+        assert not result.success
+        assert result.error_type == ErrorType.unknown

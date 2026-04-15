@@ -18,46 +18,45 @@ def ctx(tmp_path: Path) -> RunContext:
     )
 
 
-def _make_mock_process(stdout: str, returncode: int = 0, stderr: str = ""):
+def _make_mock_popen(stdout: str, returncode: int = 0, stderr: str = ""):
     mock = MagicMock()
-    mock.stdout = stdout
-    mock.stderr = stderr
     mock.returncode = returncode
+    mock.communicate.return_value = (stdout, stderr)
     return mock
 
 
 def test_claude_code_run_success(ctx: RunContext):
-    with patch("subprocess.run", return_value=_make_mock_process("output text")) as mock_run:
+    with patch("subprocess.Popen", return_value=_make_mock_popen("output text")) as mock_popen:
         backend = ClaudeCodeBackend()
         result = backend.run("coder", "do the thing", ctx)
     assert result.success is True
     assert result.output == "output text"
-    cmd = mock_run.call_args[0][0]
+    cmd = mock_popen.call_args[0][0]
     assert "claude" in cmd
     assert "--dangerously-skip-permissions" in cmd
 
 
 def test_codex_run_success(ctx: RunContext):
-    with patch("subprocess.run", return_value=_make_mock_process("output")) as mock_run:
+    with patch("subprocess.Popen", return_value=_make_mock_popen("output")) as mock_popen:
         backend = CodexBackend()
         result = backend.run("coder", "do the thing", ctx)
     assert result.success is True
-    cmd = mock_run.call_args[0][0]
+    cmd = mock_popen.call_args[0][0]
     assert "codex" in cmd
     assert "--dangerously-bypass-approvals-and-sandbox" in cmd
 
 
 def test_opencode_run_success(ctx: RunContext):
-    with patch("subprocess.run", return_value=_make_mock_process("output")) as mock_run:
+    with patch("subprocess.Popen", return_value=_make_mock_popen("output")) as mock_popen:
         backend = OpenCodeBackend()
         result = backend.run("coder", "do the thing", ctx)
     assert result.success is True
-    cmd = mock_run.call_args[0][0]
+    cmd = mock_popen.call_args[0][0]
     assert "opencode" in cmd
 
 
 def test_backend_run_failure(ctx: RunContext):
-    with patch("subprocess.run", return_value=_make_mock_process("error", returncode=1)):
+    with patch("subprocess.Popen", return_value=_make_mock_popen("error", returncode=1)):
         backend = ClaudeCodeBackend()
         result = backend.run("coder", "do the thing", ctx)
     assert result.success is False

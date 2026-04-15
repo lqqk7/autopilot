@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ class ErrorType(str, Enum):
     timeout = "timeout"
     parse_error = "parse_error"
     unknown = "unknown"
+    stopped = "stopped"
 
 
 @dataclass
@@ -45,6 +47,9 @@ class BackendBase(ABC):
     def __init__(self, model: str = "", allow_dangerous: bool = True) -> None:
         self.model = model              # empty = use the tool's own default
         self.allow_dangerous = allow_dangerous
+        self._current_proc: subprocess.Popen[str] | None = None
+        self._proc_lock = threading.Lock()
+        self._stopped = False
 
     @abstractmethod
     def _build_cmd(self, agent_name: str, prompt: str, ctx: RunContext) -> list[str]:
@@ -66,47 +71,85 @@ class BackendBase(ABC):
         return ErrorType.unknown
 
     def run(self, agent_name: str, prompt: str, ctx: RunContext, timeout: int | None = None) -> BackendResult:
+        if self._stopped:
+            return BackendResult(
+                success=False, output="", duration_seconds=0,
+                error="backend stopped", error_type=ErrorType.stopped,
+            )
+
         cmd = self._build_cmd(agent_name, prompt, ctx)
         effective_timeout = timeout if timeout is not None else self.TIMEOUT_SECONDS
         start = time.monotonic()
+
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 text=True,
-                timeout=effective_timeout,
                 cwd=ctx.project_path,
             )
+            with self._proc_lock:
+                self._current_proc = proc
+
+            try:
+                stdout, stderr = proc.communicate(timeout=effective_timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                duration = time.monotonic() - start
+                return BackendResult(
+                    success=False, output="", duration_seconds=duration,
+                    error=f"timeout after {effective_timeout}s",
+                    error_type=ErrorType.timeout,
+                )
+            finally:
+                with self._proc_lock:
+                    self._current_proc = None
+
             duration = time.monotonic() - start
+
+            # Treat SIGKILL (-9) exit as a stopped result, not a real error
+            if proc.returncode == -9 or self._stopped:
+                return BackendResult(
+                    success=False, output="", duration_seconds=duration,
+                    error="backend stopped", error_type=ErrorType.stopped,
+                )
+
             if proc.returncode != 0:
-                error_type = self._classify_error(proc.returncode, proc.stderr)
+                error_type = self._classify_error(proc.returncode, stderr)
                 return BackendResult(
                     success=False,
-                    output=proc.stdout + proc.stderr,
+                    output=stdout + stderr,
                     duration_seconds=duration,
                     error=f"exit code {proc.returncode}",
                     error_type=error_type,
                 )
-            return BackendResult(success=True, output=proc.stdout, duration_seconds=duration)
-        except subprocess.TimeoutExpired:
-            duration = time.monotonic() - start
-            return BackendResult(
-                success=False,
-                output="",
-                duration_seconds=duration,
-                error=f"timeout after {effective_timeout}s",
-                error_type=ErrorType.timeout,
-            )
+            return BackendResult(success=True, output=stdout, duration_seconds=duration)
+
         except OSError as exc:
             duration = time.monotonic() - start
             return BackendResult(
-                success=False,
-                output="",
-                duration_seconds=duration,
+                success=False, output="", duration_seconds=duration,
                 error=f"failed to launch backend ({cmd[0]}): {exc}",
                 error_type=ErrorType.unknown,
             )
+
+    def stop(self) -> None:
+        """Kill the running subprocess immediately. Safe to call from any thread."""
+        self._stopped = True
+        with self._proc_lock:
+            proc = self._current_proc
+        if proc is not None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def reset(self) -> None:
+        """Clear the stopped flag so the backend can be reused (e.g. after /resume)."""
+        self._stopped = False
 
     def is_available(self) -> bool:
         import shutil
