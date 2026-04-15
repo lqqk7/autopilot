@@ -211,15 +211,29 @@ class AutopilotApp(App):
             elif ev.type == "worker_start":
                 header.update_workers(d.get("active", 0), d.get("total", 0))
 
+            elif ev.type == "human_pause":
+                reason = d.get("reason", "")
+                doc_path = d.get("doc_path", "")
+                log.log_phase("HUMAN_PAUSE")
+                log.log_event(t("human_pause_title"), level="success")
+                if doc_path:
+                    log.log_event(t("human_pause_path", doc_path=doc_path), level="info")
+                log.log_event(t("human_pause_step1"), level="info")
+                log.log_event(t("human_pause_step2"), level="info")
+                log.log_event(t("human_pause_step3"), level="warning")
+
             elif ev.type == "pipeline_done":
                 self._pipeline_running = False
                 self._quit_confirmed = False
                 phase = d.get("final_phase", "DONE")
                 header.update_phase(phase)
-                log.log_event(
-                    t("pipeline_finished", phase=phase, elapsed=d.get("elapsed", "")),
-                    level="success",
-                )
+                if phase == "HUMAN_PAUSE":
+                    log.log_event(t("pipeline_paused"), level="warning")
+                else:
+                    log.log_event(
+                        t("pipeline_finished", phase=phase, elapsed=d.get("elapsed", "")),
+                        level="success",
+                    )
 
             elif ev.type == "pipeline_error":
                 self._pipeline_running = False

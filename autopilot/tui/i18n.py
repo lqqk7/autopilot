@@ -31,6 +31,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "cmd_help":      "Show all available commands",
         "cmd_quit":      "Exit Autopilot",
         "cmd_lang":      "Switch display language  (en / zh)",
+        # human pause (interview)
+        "human_pause_title":    "📋  Interview document generated",
+        "human_pause_path":     "Path: {doc_path}",
+        "human_pause_step1":    "① Open the file and review Autopilot's clarification questions",
+        "human_pause_step2":    "② Fill in your answers (add details, remove irrelevant questions)",
+        "human_pause_step3":    "③ Save the file, then type /resume here to continue the pipeline",
         # header labels
         "lbl_phase":    "Phase",
         "lbl_backend":  "via",
@@ -63,6 +69,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "reload_ok":        "✓ Config reloaded.",
         "reload_error":     "Failed to reload config: {exc}",
         # misc
+        "pipeline_paused":          "Pipeline paused — run /status for details or /resume to continue.",
         "pipeline_already_running": "Pipeline already running.",
         "no_state_found": "No state found — run /run first",
         "no_sessions":    "No sessions recorded yet.",
@@ -98,6 +105,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "cmd_help":      "显示所有可用命令",
         "cmd_quit":      "退出 Autopilot",
         "cmd_lang":      "切换显示语言（en / zh）",
+        # human pause (interview)
+        "human_pause_title":    "📋  需求澄清文档已生成",
+        "human_pause_path":     "文件路径：{doc_path}",
+        "human_pause_step1":    "① 打开该文件，查看 Autopilot 提出的问题",
+        "human_pause_step2":    "② 在文件中填写你的回答（可补充细节、删除不相关问题）",
+        "human_pause_step3":    "③ 保存文件后，回到这里输入 /resume 继续流水线",
         # header labels
         "lbl_phase":    "阶段",
         "lbl_backend":  "后端",
@@ -130,6 +143,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "reload_ok":        "✓ 配置已重载。",
         "reload_error":     "配置重载失败：{exc}",
         # misc
+        "pipeline_paused":          "流水线已暂停 — 输入 /status 查看详情，或 /resume 继续。",
         "pipeline_already_running": "流水线正在运行。",
         "no_state_found": "未找到状态文件 — 请先执行 /run",
         "no_sessions":    "暂无 Session 记录。",

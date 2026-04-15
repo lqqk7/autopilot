@@ -414,14 +414,20 @@ class PipelineEngine:
                 self._on_phase_passed(state, start_time)
                 # INTERVIEW done → pause for human to fill in answers
                 if state.phase == Phase.HUMAN_PAUSE and not state.pause_reason:
-                    state.pause_reason = "interview: please fill in .autopilot/requirements/INTERVIEW.md then run `ap resume`"
+                    doc_path = str(self.autopilot_dir / "requirements" / "INTERVIEW.md")
+                    state.pause_reason = f"interview: please fill in {doc_path} then run `ap resume`"
                     self.save_state(state)
                     click.echo("\n" + "═" * 60)
                     click.echo("📋  需求澄清报告已生成！")
-                    click.echo("    请打开并填写：")
-                    click.echo("    .autopilot/requirements/INTERVIEW.md")
+                    click.echo(f"    请打开并填写：{doc_path}")
                     click.echo("    填写完成后运行 `ap resume` 继续")
                     click.echo("═" * 60 + "\n")
+                    if self._event_bus:
+                        self._event_bus.emit(
+                            "human_pause",
+                            reason="interview",
+                            doc_path=doc_path,
+                        )
                     if self.notifier:
                         self.notifier.send_pause(
                             phase="INTERVIEW",
