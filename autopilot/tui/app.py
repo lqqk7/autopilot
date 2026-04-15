@@ -16,7 +16,7 @@ from typing import Any
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -35,10 +35,19 @@ class AutopilotApp(App):
     CSS = """
     Screen {
         background: $background;
+        layout: vertical;
     }
 
     #layout {
         height: 1fr;
+    }
+
+    #suggestions {
+        height: auto;
+        max-height: 12;
+        background: $surface-darken-1;
+        border: tall $accent;
+        display: none;
     }
 
     #input-row {
@@ -49,25 +58,17 @@ class AutopilotApp(App):
     }
 
     #prompt-label {
-        width: 2;
+        width: auto;
         color: $accent;
-        content-align: left middle;
-        height: 3;
-        padding: 1 0 0 0;
+        content-align: center middle;
+        height: 100%;
     }
 
     #cmd-input {
         width: 1fr;
         border: none;
         background: $surface;
-    }
-
-    #suggestions {
-        height: auto;
-        max-height: 12;
-        background: $surface-darken-1;
-        border: tall $accent;
-        display: none;
+        height: 100%;
     }
     """
 
@@ -92,17 +93,17 @@ class AutopilotApp(App):
         with Vertical(id="layout"):
             yield FeatureTable()
             yield LogPanel()
-        with Vertical(id="input-area"):
-            yield OptionList(id="suggestions")
-            with Vertical(id="input-row"):
-                yield Static("> ", id="prompt-label")
-                yield Input(placeholder="type /help for commands…", id="cmd-input")
+        yield OptionList(id="suggestions")
+        with Horizontal(id="input-row"):
+            yield Static("> ", id="prompt-label")
+            yield Input(placeholder="type /help for commands…", id="cmd-input")
 
     def on_mount(self) -> None:
         self.title = "Autopilot"
         self.sub_title = str(self.project_path)
         self.set_interval(0.1, self._poll_events)
-        self._log("Autopilot ready. Type [bold]/help[/bold] or [bold]/run[/bold] to start.", level="info")
+        self._log("Autopilot ready. Type /help or /run to start.", level="info")
+        self.query_one("#cmd-input", Input).focus()
 
     # ── event bus polling ────────────────────────────────────────────────────
 
