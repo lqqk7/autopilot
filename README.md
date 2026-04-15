@@ -188,6 +188,42 @@ That's all. Autopilot will ask clarifying questions in the INTERVIEW phase if an
 
 #### Step 3 — Run the pipeline
 
+**Option A — Full-screen TUI (recommended, v0.3+)**
+
+```bash
+autopilot
+```
+
+Opens a full-screen interactive terminal dashboard. Type `/run` to start the pipeline, `/help` to see all commands.
+
+```
+┌─ RUNNING  ⏱ 03:42  via claude  features 4/10  workers 2/2 ──────────────────────┐
+│  ⏳  feat-001  Auth module            CODE      claude   –       │
+│  🔄  feat-002  Payment gateway        TEST      claude   –       │
+│  ✅  feat-003  User profile           done      claude   –       │
+│  ⏸   feat-004  Dashboard UI           waits: feat-003            │
+├─ log ──────────────────────────────────────────────────────────────────────────────┤
+│ 03:41  [feat-002]  Starting phase TEST (backend: claude)                          │
+│ 03:42  [feat-001]  Agent reported status=success                                  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+> /run_
+```
+
+**Slash commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/run` | Start pipeline from scratch |
+| `/resume` | Resume from last checkpoint |
+| `/check` | Pre-flight validation |
+| `/redo [ID\|--failed]` | Re-run specific feature(s) |
+| `/status` | Show pipeline state |
+| `/sessions` | List recorded sessions |
+| `/help` | Show all commands |
+| `/quit` | Exit |
+
+**Option B — Classic CLI**
+
 ```bash
 ap run
 ```
@@ -809,6 +845,29 @@ my-project/
 ---
 
 #### 第三步 — 启动流水线
+
+**方式 A — 全屏 TUI（推荐，v0.3+）**
+
+```bash
+autopilot
+```
+
+打开全屏交互式终端面板，输入 `/run` 启动流水线，输入 `/help` 查看所有命令。
+
+**斜杠命令：**
+
+| 命令 | 说明 |
+|------|------|
+| `/run` | 从头启动流水线 |
+| `/resume` | 从上次断点继续 |
+| `/check` | 运行前环境检测 |
+| `/redo [ID\|--failed]` | 重跑指定 Feature |
+| `/status` | 显示当前流水线状态 |
+| `/sessions` | 列出所有 Session 记录 |
+| `/help` | 显示所有命令 |
+| `/quit` | 退出 |
+
+**方式 B — 经典 CLI**
 
 ```bash
 ap run
