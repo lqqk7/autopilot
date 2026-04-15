@@ -14,6 +14,7 @@ from autopilot.pipeline.config import PipelineConfig
 from autopilot.pipeline.context import AgentOutput, Feature, Phase
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, handle_error
 from autopilot.sessions.recorder import SessionRecorder
+from autopilot.tui.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class FeatureWorker:
         config: PipelineConfig | None = None,
         review_backend: BackendBase | None = None,
         recorder: SessionRecorder | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.feature = feature
         self.backend = backend
@@ -65,6 +67,7 @@ class FeatureWorker:
         # None = use self.backend for review (self / fallback)
         self._review_backend = review_backend
         self._recorder = recorder
+        self._event_bus: EventBus | None = event_bus
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
         self.artifacts: list[str] = []
@@ -120,6 +123,17 @@ class FeatureWorker:
         self.current_phase = phase
         active = self._active_backend(phase)
         self.current_backend_name = _backend_name(active)
+        if self._event_bus:
+            self._event_bus.emit(
+                "feature_update",
+                feature_id=self.feature.id,
+                title=self.feature.title,
+                status="active",
+                current_phase=phase.value,
+                backend=self.current_backend_name,
+                fix_retries=self.fix_retries,
+                max_retries=self._cfg.max_fix_retries,
+            )
 
         kb = LocalKnowledge(self.autopilot_dir / "knowledge")
         knowledge_md = kb.read_all()

@@ -25,6 +25,7 @@ from autopilot.pipeline.phases import DELIVERY_DOCS, ExitCondition, PhaseRunner
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, exponential_backoff, handle_error
 from autopilot.pipeline.worker import FeatureWorker
 from autopilot.sessions.recorder import SessionRecorder
+from autopilot.tui.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class PipelineEngine:
         parallel_backends: list[BackendBase] | None = None,
         log_level: str = "INFO",
         pipeline_config: PipelineConfig | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.project_path = project_path
         self.autopilot_dir = project_path / ".autopilot"
@@ -77,6 +79,7 @@ class PipelineEngine:
         self._overview_lock = threading.Lock()
         self._git_lock = threading.Lock()
         self._recorder: SessionRecorder | None = None
+        self._event_bus: EventBus | None = event_bus
 
     def state_path(self) -> Path:
         return self.autopilot_dir / "state.json"
@@ -133,6 +136,8 @@ class PipelineEngine:
             self.notifier.send_backend_switch(old_name, self._backend_name, error_type.value)
         if self._recorder:
             self._recorder.backend_switch(old_name, self._backend_name, error_type.value)
+        if self._event_bus:
+            self._event_bus.emit("backend_switch", from_backend=old_name, to_backend=self._backend_name, reason=error_type.value)
         return True
 
     def check_pause(self, state: PipelineState) -> bool:
@@ -365,6 +370,15 @@ class PipelineEngine:
             fl = self._load_feature_list()
             fd = sum(1 for f in fl.features if f.status == "completed") if fl else 0
             ft = len(fl.features) if fl else 0
+            elapsed = f"{time.monotonic() - self._run_start:.0f}s"
+            if self._event_bus:
+                self._event_bus.emit(
+                    "pipeline_done",
+                    final_phase=state.phase.value,
+                    elapsed=elapsed,
+                    features_done=fd,
+                    features_total=ft,
+                )
             self._recorder.session_end(
                 final_phase=state.phase.value,
                 elapsed_s=time.monotonic() - self._run_start,
@@ -390,6 +404,8 @@ class PipelineEngine:
 
             if self._recorder:
                 self._recorder.phase_enter(state.phase.value)
+            if self._event_bus:
+                self._event_bus.emit("phase_change", to_phase=state.phase.value)
             _phase_t0 = time.monotonic()
             passed = self.run_phase(state)
             if self._recorder:
@@ -519,7 +535,7 @@ class PipelineEngine:
                         type(backend).__name__,
                         type(review_backend).__name__ if review_backend else "self",
                     )
-                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend, recorder=self._recorder)
+                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend, recorder=self._recorder, event_bus=self._event_bus)
                     with workers_lock:
                         active_workers.append(worker)
                     try:
@@ -582,6 +598,16 @@ class PipelineEngine:
                             f.status = "completed" if ok else "failed"
                             if ok:
                                 completed_feature = f
+                            if self._event_bus:
+                                self._event_bus.emit(
+                                    "feature_update",
+                                    feature_id=f.id,
+                                    title=f.title,
+                                    status=f.status,
+                                    current_phase="",
+                                    fix_retries=getattr(f, "fix_retries", 0),
+                                    max_retries=self._cfg.max_fix_retries,
+                                )
                             break
                     if ok:
                         completed_ids.add(fid)
@@ -642,6 +668,8 @@ class PipelineEngine:
                     capture_output=True, cwd=self.project_path, check=True,
                 )
                 logger.info("[%s] auto-committed: %s", feature.id, msg)
+                if self._event_bus:
+                    self._event_bus.emit("auto_commit", feature_id=feature.id, message=msg)
         except Exception as exc:
             logger.warning("[%s] auto-commit failed (skipped): %s", feature.id, exc)
 
