@@ -213,12 +213,15 @@ Opens a full-screen interactive terminal dashboard. Type `/run` to start the pip
 
 | Command | Description |
 |---------|-------------|
+| `/init [--backend claude\|codex\|opencode]` | Initialize autopilot in the current directory |
 | `/run` | Start pipeline from scratch |
 | `/resume` | Resume from last checkpoint |
 | `/check` | Pre-flight validation |
+| `/add TITLE [--phase X] [--depends-on IDs]` | Add a new feature to the backlog |
 | `/redo [ID\|--failed]` | Re-run specific feature(s) |
 | `/status` | Show pipeline state |
-| `/sessions` | List recorded sessions |
+| `/sessions [show SESSION_ID]` | List or inspect recorded sessions |
+| `/knowledge [list\|search QUERY]` | List or search the knowledge base |
 | `/lang [en\|zh]` | Switch display language |
 | `/help` | Show all commands |
 | `/quit` | Exit |

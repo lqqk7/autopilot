@@ -317,6 +317,30 @@ class AutopilotApp(App):
     def _cmd_exit(self, args: list[str]) -> None:
         self._cmd_quit(args)
 
+    def _cmd_init(self, args: list[str]) -> None:
+        log = self.query_one(LogPanel)
+        autopilot_dir = self.project_path / ".autopilot"
+        if autopilot_dir.exists():
+            log.log_event(".autopilot/ already exists — use /check to validate.", "warning")
+            return
+        backend = "claude"
+        if "--backend" in args:
+            idx = args.index("--backend")
+            if idx + 1 < len(args):
+                backend = args[idx + 1]
+        elif args and not args[0].startswith("--"):
+            backend = args[0]
+        if backend not in ("claude", "codex", "opencode"):
+            log.log_event(f"Unknown backend {backend!r}. Use: claude | codex | opencode", "warning")
+            return
+        try:
+            from autopilot.init_project import init_project
+            init_project(project_path=self.project_path, backend=backend)
+            log.log_event(f"✓ Initialized .autopilot/  (backend: {backend})", "success")
+            log.log_event("Add requirements to .autopilot/requirements/ then run /run", "info")
+        except Exception as exc:
+            log.log_error(str(exc))
+
     def _cmd_check(self, _args: list[str]) -> None:
         log = self.query_one(LogPanel)
         log.log_phase("CHECK")
@@ -399,21 +423,60 @@ class AutopilotApp(App):
                 f"Features: {done}/{len(fl.features)} done, {failed} failed", "info"
             )
 
-    def _cmd_sessions(self, _args: list[str]) -> None:
+    def _cmd_sessions(self, args: list[str]) -> None:
         from autopilot.sessions.reader import list_sessions
 
         log = self.query_one(LogPanel)
         sessions_dir = self.project_path / ".autopilot" / "sessions"
+
+        # /sessions show SESSION_ID
+        if args and args[0] == "show":
+            session_id = args[1] if len(args) > 1 else "latest"
+            show_output = "--output" in args
+            self._show_session(log, sessions_dir, session_id, show_output)
+            return
+
         sessions = list_sessions(sessions_dir)
         if not sessions:
             log.log_event(t("no_sessions"), "info"); return
         log.log_phase("SESSIONS")
-        for s in sessions[:10]:
+        for s in sessions[:15]:
             log.log_event(
                 f"{s['session_id'][:20]}  {s['status']}  {s['phase']}  "
                 f"{s['features_done']}/{s['features_total']} features",
                 "info",
             )
+
+    def _show_session(self, log: LogPanel, sessions_dir: "Path", session_id: str, show_output: bool) -> None:
+        from autopilot.sessions.reader import list_sessions, load_session_events
+
+        sessions = list_sessions(sessions_dir)
+        if not sessions:
+            log.log_event(t("no_sessions"), "info"); return
+
+        if session_id == "latest":
+            meta = sessions[0]
+        else:
+            matches = [s for s in sessions if s["session_id"].startswith(session_id)]
+            if not matches:
+                log.log_event(f"Session {session_id!r} not found", "error"); return
+            meta = matches[0]
+
+        log.log_phase(f"SESSION {meta['session_id'][:16]}")
+        log.log_event(f"Status: {meta['status']}  Phase: {meta['phase']}  Features: {meta['features_done']}/{meta['features_total']}", "info")
+        try:
+            events_list = load_session_events(sessions_dir / f"{meta['session_id']}.jsonl")
+            for ev in events_list[:30]:
+                ev_type = ev.get("type", "")
+                if ev_type == "phase_change":
+                    log.log_event(f"→ {ev.get('to_phase')}", "info")
+                elif ev_type == "feature_done":
+                    status = "✅" if ev.get("success") else "✗"
+                    log.log_event(f"  {status} {ev.get('feature_id')}  {ev.get('title', '')}", "info")
+                elif ev_type == "agent_call" and show_output:
+                    log.log_event(f"    [{ev.get('phase')}] {ev.get('agent_name')} {ev.get('backend_name')} {ev.get('duration_s', 0):.0f}s", "info")
+        except Exception:
+            pass
 
     def _cmd_run(self, _args: list[str]) -> None:
         if self._pipeline_running:
@@ -462,6 +525,113 @@ class AutopilotApp(App):
         state.active_feature_ids = []
         state.save(state_path)
         log.log_event(t("redo_done", n=len(targets)), "success")
+
+    def _cmd_add(self, args: list[str]) -> None:
+        from autopilot.pipeline.context import Feature, FeatureList, Phase, PipelineState
+
+        log = self.query_one(LogPanel)
+        if not args:
+            log.log_event(
+                "Usage: /add TITLE [--phase backend|frontend|fullstack|infra] [--depends-on feat-001,feat-002]",
+                "warning",
+            )
+            return
+
+        # Parse flags; everything else is the title
+        phase = "backend"
+        depends_on = ""
+        title_parts: list[str] = []
+        i = 0
+        while i < len(args):
+            if args[i] == "--phase" and i + 1 < len(args):
+                phase = args[i + 1]; i += 2
+            elif args[i] == "--depends-on" and i + 1 < len(args):
+                depends_on = args[i + 1]; i += 2
+            else:
+                title_parts.append(args[i]); i += 1
+
+        title = " ".join(title_parts)
+        if not title:
+            log.log_event("Usage: /add TITLE [--phase X] [--depends-on IDs]", "warning"); return
+        if phase not in ("backend", "frontend", "fullstack", "infra"):
+            log.log_event(f"Unknown phase {phase!r}. Use: backend | frontend | fullstack | infra", "warning"); return
+
+        autopilot_dir = self.project_path / ".autopilot"
+        fl_path = autopilot_dir / "feature_list.json"
+        if not fl_path.exists():
+            log.log_event(t("no_feature_list"), "error"); return
+
+        try:
+            fl = FeatureList.load(fl_path)
+            nums = []
+            for f in fl.features:
+                try:
+                    nums.append(int(f.id.split("-")[1]))
+                except (IndexError, ValueError):
+                    pass
+            new_id = f"feat-{max(nums, default=0) + 1:03d}"
+            dep_list = [d.strip() for d in depends_on.split(",") if d.strip()] if depends_on else []
+            fl.features.append(Feature(
+                id=new_id, title=title, phase=phase,
+                depends_on=dep_list, status="pending",
+                test_file=f"tests/test_{new_id.replace('-', '_')}.py",
+            ))
+            fl.save(fl_path)
+
+            state_path = autopilot_dir / "state.json"
+            if state_path.exists():
+                state = PipelineState.load(state_path)
+                if state.phase in (Phase.DONE, Phase.DELIVERY, Phase.KNOWLEDGE, Phase.DOC_UPDATE):
+                    state.phase = Phase.DEV_LOOP
+                    state.phase_retries = 0
+                    state.save(state_path)
+                    log.log_event(f"✓ {new_id}: {title}  (pipeline reset to DEV_LOOP — run /resume)", "success")
+                    return
+            log.log_event(f"✓ {new_id}: {title}", "success")
+        except Exception as exc:
+            log.log_error(str(exc))
+
+    def _cmd_kb(self, args: list[str]) -> None:
+        self._cmd_knowledge(args)
+
+    def _cmd_knowledge(self, args: list[str]) -> None:
+        from autopilot.knowledge.local import LocalKnowledge
+
+        log = self.query_one(LogPanel)
+        kb_dir = self.project_path / ".autopilot" / "knowledge"
+        if not kb_dir.exists():
+            log.log_event("No knowledge base found — run the pipeline first.", "warning"); return
+
+        sub = args[0].lower() if args else "list"
+
+        if sub == "list" or not args:
+            files = sorted(kb_dir.rglob("*.md"))
+            log.log_phase("KNOWLEDGE")
+            if not files:
+                log.log_event("Knowledge base is empty.", "info"); return
+            for md in files:
+                log.log_event(str(md.relative_to(kb_dir)), "info")
+        elif sub == "search":
+            query = " ".join(args[1:])
+            if not query:
+                log.log_event("Usage: /knowledge search QUERY", "warning"); return
+            self._knowledge_search(log, kb_dir, query)
+        else:
+            # Treat entire args as a search query (no sub-command prefix needed)
+            self._knowledge_search(log, kb_dir, " ".join(args))
+
+    def _knowledge_search(self, log: LogPanel, kb_dir: "Path", query: str) -> None:
+        from autopilot.knowledge.local import LocalKnowledge
+
+        kb = LocalKnowledge(kb_dir)
+        content = kb.read_all()
+        matches = [ln for ln in content.splitlines() if query.lower() in ln.lower() and ln.strip()]
+        log.log_phase(f"SEARCH: {query}")
+        if matches:
+            for m in matches[:15]:
+                log.log_event(m.strip(), "info")
+        else:
+            log.log_event("No matches found.", "info")
 
     # ── pipeline runner ───────────────────────────────────────────────────────
 

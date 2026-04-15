@@ -30,9 +30,21 @@ class Command:
 # ── command definitions ───────────────────────────────────────────────────────
 
 COMMANDS: list[Command] = [
+    Command(
+        name="init",
+        description_key="cmd_init",
+        usage="/init",
+        args_hint="[--backend claude|codex|opencode]",
+    ),
     Command(name="run",      description_key="cmd_run",      usage="/run"),
     Command(name="resume",   description_key="cmd_resume",   usage="/resume"),
     Command(name="check",    description_key="cmd_check",    usage="/check"),
+    Command(
+        name="add",
+        description_key="cmd_add",
+        usage="/add",
+        args_hint='TITLE [--phase backend|frontend|fullstack|infra] [--depends-on IDs]',
+    ),
     Command(
         name="redo",
         description_key="cmd_redo",
@@ -40,7 +52,19 @@ COMMANDS: list[Command] = [
         args_hint="[FEATURE_ID | --failed]",
     ),
     Command(name="status",   description_key="cmd_status",   usage="/status"),
-    Command(name="sessions", description_key="cmd_sessions", usage="/sessions"),
+    Command(
+        name="sessions",
+        description_key="cmd_sessions",
+        usage="/sessions",
+        args_hint="[show SESSION_ID]",
+    ),
+    Command(
+        name="knowledge",
+        description_key="cmd_knowledge",
+        usage="/knowledge",
+        args_hint="[list | search QUERY]",
+        aliases=["kb"],
+    ),
     Command(
         name="lang",
         description_key="cmd_lang",
