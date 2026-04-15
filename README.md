@@ -9,6 +9,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue?logo=python)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![uv](https://img.shields.io/badge/managed%20with-uv-purple)](https://github.com/astral-sh/uv)
+[![PyPI](https://img.shields.io/pypi/v/autopilot-ai?color=blue)](https://pypi.org/project/autopilot-ai/)
 
 **[English](#english) · [中文](#chinese)**
 
@@ -197,17 +198,36 @@ autopilot
 Opens a full-screen interactive terminal dashboard. Type `/run` to start the pipeline, `/help` to see all commands.
 
 ```
-┌─ RUNNING  ⏱ 03:42  via claude  features 4/10  workers 2/2 ──────────────────────┐
-│  ⏳  feat-001  Auth module            CODE      claude   –       │
-│  🔄  feat-002  Payment gateway        TEST      claude   –       │
-│  ✅  feat-003  User profile           done      claude   –       │
-│  ⏸   feat-004  Dashboard UI           waits: feat-003            │
-├─ log ──────────────────────────────────────────────────────────────────────────────┤
-│ 03:41  [feat-002]  Starting phase TEST (backend: claude)                          │
-│ 03:42  [feat-001]  Agent reported status=success                                  │
-└────────────────────────────────────────────────────────────────────────────────────┘
-> /run_
+┌─ autopilot v0.3.6  │  ~/my-project  │  2026-04-16  04:35:22 ─────────────────┐
+│ DEV_LOOP  via claude  │  features 3/10  │  workers 2/2  │  01:42              │
+│ model: default  │  review: self  │  log: INFO  │  max-workers: 2              │
+├─ feat-001 ─────────────────────────────────────────────────────────────────────┤
+│  ⏳  feat-001  Auth module            CODE      claude   –                    │
+│  🔄  feat-002  Payment gateway        TEST      claude   –                    │
+│  ✅  feat-003  User profile           done      claude   –                    │
+├─ log ──────────────────────────────────────────────────────────────────────────┤
+│ 04:35  [feat-002]  Starting phase TEST (backend: claude)                       │
+│ 04:35  [feat-001]  Agent reported status=success                               │
+└> /run_────────────────────────────────────────────────────────────────────────┘
 ```
+
+**The INTERVIEW pause**
+
+When you type `/run`, Autopilot starts with the INTERVIEW phase — the AI reads your requirements and generates clarifying questions. Once INTERVIEW completes, the TUI displays a clear prompt directly in the dashboard:
+
+```
+📋  INTERVIEW complete — fill in your answers to continue
+
+  File:   .autopilot/requirements/INTERVIEW.md
+
+  Steps:
+    1. Open the file above in your editor
+    2. Fill in the answers to each question
+    3. Type /resume here to continue
+
+```
+
+No need to hunt through terminal stdout — the full guidance is right in front of you. Fill in `.autopilot/requirements/INTERVIEW.md`, then type `/resume`. The pipeline continues: **DOC_GEN → PLANNING → DEV_LOOP**.
 
 **Slash commands:**
 
@@ -242,19 +262,23 @@ Opens a full-screen interactive terminal dashboard. Type `/run` to start the pip
 | `review-mode` | `/set review-mode cross` | Review strategy (self/cross/backend) |
 | `review-backend` | `/set review-backend codex` | Dedicated review backend |
 
+> 💡 Changes made via `/set` are written to `config.toml` immediately — the header updates on screen right away. The new values take effect on the next `/run` or `/resume`.
+
 **Option B — Classic CLI**
 
 ```bash
 ap run
 ```
 
-Autopilot starts the full pipeline. When it needs your input (INTERVIEW phase — clarifying questions about your requirements), it pauses and prints the questions. Answer them, then:
+Autopilot starts the full pipeline. When it needs your input (INTERVIEW phase — clarifying questions about your requirements), it pauses and prints the questions to stdout. Answer them in `.autopilot/requirements/INTERVIEW.md`, then:
 
 ```bash
 ap resume
 ```
 
 From that point on, the pipeline runs fully autonomously until all features are developed and delivery docs are generated.
+
+> 💡 **TUI vs CLI — INTERVIEW handling:** In TUI mode, the guidance (file path + 3-step instructions) is shown directly in the dashboard when INTERVIEW finishes — no need to scroll through terminal output. In CLI mode, the same instructions are printed to stdout.
 
 ---
 
@@ -878,6 +902,38 @@ autopilot
 
 打开全屏交互式终端面板，输入 `/run` 启动流水线，输入 `/help` 查看所有命令。
 
+```
+┌─ autopilot v0.3.6  │  ~/my-project  │  2026-04-16  04:35:22 ─────────────────┐
+│ DEV_LOOP  via claude  │  features 3/10  │  workers 2/2  │  01:42              │
+│ model: default  │  review: self  │  log: INFO  │  max-workers: 2              │
+├─ feat-001 ─────────────────────────────────────────────────────────────────────┤
+│  ⏳  feat-001  Auth module            CODE      claude   –                    │
+│  🔄  feat-002  Payment gateway        TEST      claude   –                    │
+│  ✅  feat-003  User profile           done      claude   –                    │
+├─ log ──────────────────────────────────────────────────────────────────────────┤
+│ 04:35  [feat-002]  Starting phase TEST (backend: claude)                       │
+│ 04:35  [feat-001]  Agent reported status=success                               │
+└> /run_────────────────────────────────────────────────────────────────────────┘
+```
+
+**INTERVIEW 暂停说明**
+
+输入 `/run` 后，Autopilot 从 INTERVIEW 阶段开始——AI 读取你的需求文件并生成一批澄清问题。INTERVIEW 完成后，TUI 会直接在面板中显示清晰的操作提示：
+
+```
+📋  INTERVIEW complete — fill in your answers to continue
+
+  File:   .autopilot/requirements/INTERVIEW.md
+
+  Steps:
+    1. Open the file above in your editor
+    2. Fill in the answers to each question
+    3. Type /resume here to continue
+
+```
+
+无需翻找终端输出——操作指引直接显示在面板里。用编辑器打开 `.autopilot/requirements/INTERVIEW.md`，填写好回答，再输入 `/resume`，流水线继续：**DOC_GEN → PLANNING → DEV_LOOP**。
+
 **斜杠命令：**
 
 | 命令 | 说明 |
@@ -911,19 +967,23 @@ autopilot
 | `review-mode` | `/set review-mode cross` | 代码审查策略（self/cross/backend） |
 | `review-backend` | `/set review-backend codex` | 专用审查后端 |
 
+> 💡 `/set` 修改的配置会立即写入 `config.toml`，顶部 Header 也会即时刷新。新值在下一次 `/run` 或 `/resume` 时生效。
+
 **方式 B — 经典 CLI**
 
 ```bash
 ap run
 ```
 
-Autopilot 启动完整流水线。当需要你介入时（INTERVIEW 阶段——澄清需求问题），流水线会暂停并打印问题。回答完毕后执行：
+Autopilot 启动完整流水线。当需要你介入时（INTERVIEW 阶段——澄清需求问题），流水线会暂停并将操作指引打印到 stdout。在 `.autopilot/requirements/INTERVIEW.md` 中回答完问题后执行：
 
 ```bash
 ap resume
 ```
 
 之后流水线全自动运行，直到所有 Feature 开发完成、交付文档生成为止。
+
+> 💡 **TUI 与 CLI 的 INTERVIEW 处理差异：** TUI 模式下，INTERVIEW 完成后操作提示（文件路径 + 三步说明）会直接显示在面板中，无需翻看终端输出。CLI 模式下，同样的提示信息打印到 stdout。
 
 ---
 
