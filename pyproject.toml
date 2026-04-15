@@ -1,6 +1,6 @@
 [project]
 name = "autopilot-ai"
-version = "0.3.1"
+version = "0.3.2"
 description = "AI coding automation engine"
 requires-python = ">=3.12"
 dependencies = [

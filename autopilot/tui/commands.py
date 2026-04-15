@@ -2,68 +2,53 @@
 
 Commands are plain dataclasses; the App handles execution so this module has
 no import dependency on Textual internals and stays easy to test.
+
+Descriptions are fetched from the i18n module at call-time so they update
+immediately when the user switches language with /lang.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+
+from autopilot.tui.i18n import t
 
 
 @dataclass
 class Command:
-    name: str                        # e.g. "run"
-    description: str
-    usage: str                       # e.g. "/run"
+    name: str                       # e.g. "run"
+    description_key: str            # i18n key, e.g. "cmd_run"
+    usage: str                      # e.g. "/run"
     aliases: list[str] = field(default_factory=list)
-    args_hint: str = ""              # displayed after the command in the suggestion list
+    args_hint: str = ""             # displayed after the command in the suggestion list
+
+    @property
+    def description(self) -> str:
+        """Return translated description (live, respects current language)."""
+        return t(self.description_key)
 
 
 # ── command definitions ───────────────────────────────────────────────────────
 
 COMMANDS: list[Command] = [
-    Command(
-        name="run",
-        description="Start the full pipeline from scratch",
-        usage="/run",
-    ),
-    Command(
-        name="resume",
-        description="Resume from the last checkpoint",
-        usage="/resume",
-    ),
-    Command(
-        name="check",
-        description="Pre-flight validation (config, backends, env vars)",
-        usage="/check",
-    ),
+    Command(name="run",      description_key="cmd_run",      usage="/run"),
+    Command(name="resume",   description_key="cmd_resume",   usage="/resume"),
+    Command(name="check",    description_key="cmd_check",    usage="/check"),
     Command(
         name="redo",
-        description="Re-run a specific feature, or all failed features",
+        description_key="cmd_redo",
         usage="/redo",
         args_hint="[FEATURE_ID | --failed]",
     ),
+    Command(name="status",   description_key="cmd_status",   usage="/status"),
+    Command(name="sessions", description_key="cmd_sessions", usage="/sessions"),
     Command(
-        name="status",
-        description="Show current pipeline state and feature list",
-        usage="/status",
+        name="lang",
+        description_key="cmd_lang",
+        usage="/lang",
+        args_hint="[en | zh]",
     ),
-    Command(
-        name="sessions",
-        description="List all recorded sessions",
-        usage="/sessions",
-    ),
-    Command(
-        name="help",
-        description="Show all available commands",
-        usage="/help",
-        aliases=["?"],
-    ),
-    Command(
-        name="quit",
-        description="Exit Autopilot",
-        usage="/quit",
-        aliases=["exit", "q"],
-    ),
+    Command(name="help",     description_key="cmd_help",     usage="/help", aliases=["?"]),
+    Command(name="quit",     description_key="cmd_quit",     usage="/quit", aliases=["exit", "q"]),
 ]
 
 # ── lookup helpers ────────────────────────────────────────────────────────────
@@ -83,6 +68,7 @@ def lookup(name: str) -> Command | None:
 def completions_for(prefix: str) -> list[tuple[str, str]]:
     """Return [(slash_usage, description)] matching the given prefix.
 
+    Descriptions are fetched live from i18n so they reflect the current language.
     prefix should be the raw input string, e.g. "/" or "/re".
     """
     clean = prefix.lstrip("/").lower()

@@ -58,6 +58,10 @@ model = ""
 # Set to false to disable (e.g. if you manage commits manually).
 auto_commit = true
 
+# TUI display language: "en" (default) or "zh" (Chinese).
+# Can also be changed at runtime with /lang inside the TUI.
+language = "en"
+
 
 [autopilot.review]
 # Review mode:

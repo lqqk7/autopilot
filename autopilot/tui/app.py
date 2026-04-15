@@ -11,9 +11,8 @@ from __future__ import annotations
 import threading
 import toml
 from pathlib import Path
-from typing import Any
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -22,11 +21,10 @@ from textual.widgets.option_list import Option
 
 from autopilot.tui.commands import COMMANDS, completions_for, lookup, parse
 from autopilot.tui.event_bus import EventBus
+from autopilot.tui.i18n import get_language, set_language, t
 from autopilot.tui.widgets.feature_table import FeatureRow, FeatureTable
+from autopilot.tui.widgets.header import AppHeader
 from autopilot.tui.widgets.log_panel import LogPanel
-from autopilot.tui.widgets.status_bar import StatusBar
-
-_LOGO = "[bold cyan]autopilot[/bold cyan] [dim]v0.3.1[/dim]"
 
 
 class AutopilotApp(App):
@@ -38,43 +36,50 @@ class AutopilotApp(App):
         layout: vertical;
     }
 
-    #layout {
+    #main {
+        height: 1fr;
+    }
+
+    FeatureTable {
+        height: 1fr;
+        min-height: 4;
+        border: tall $accent-darken-2;
+    }
+
+    LogPanel {
         height: 1fr;
     }
 
     #suggestions {
         height: auto;
-        max-height: 12;
+        max-height: 10;
         background: $surface-darken-1;
         border: tall $accent;
         display: none;
     }
 
     #input-row {
-        height: 3;
-        background: $surface;
-        border: tall $accent-darken-2;
+        height: 1;
         padding: 0 1;
+        background: $surface;
     }
 
     #prompt-label {
         width: auto;
         color: $accent;
-        content-align: center middle;
-        height: 100%;
     }
 
     #cmd-input {
         width: 1fr;
         border: none;
         background: $surface;
-        height: 100%;
+        padding: 0;
     }
     """
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", priority=True),
-        Binding("escape", "clear_input", "Clear input"),
+        Binding("escape", "clear_input", "Clear / close suggestions"),
         Binding("f1", "show_help", "Help"),
     ]
 
@@ -89,34 +94,84 @@ class AutopilotApp(App):
     # ── layout ────────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield StatusBar()
-        with Vertical(id="layout"):
+        yield AppHeader(self.project_path)
+        with Vertical(id="main"):
             yield FeatureTable()
             yield LogPanel()
         yield OptionList(id="suggestions")
         with Horizontal(id="input-row"):
             yield Static("> ", id="prompt-label")
-            yield Input(placeholder="type /help for commands…", id="cmd-input")
+            yield Input(placeholder="/help  /run  /check  /redo  /status", id="cmd-input")
 
     def on_mount(self) -> None:
         self.title = "Autopilot"
-        self.sub_title = str(self.project_path)
+        self._load_language_from_config()
         self.set_interval(0.1, self._poll_events)
-        self._log("Autopilot ready. Type /help or /run to start.", level="info")
+        self._log(t("welcome"), level="info")
         self.query_one("#cmd-input", Input).focus()
 
-    # ── event bus polling ────────────────────────────────────────────────────
+    # ── language loading ──────────────────────────────────────────────────────
+
+    def _load_language_from_config(self) -> None:
+        """Read language setting from .autopilot/config.toml if it exists."""
+        config_path = self.project_path / ".autopilot" / "config.toml"
+        if not config_path.exists():
+            return
+        try:
+            cfg = toml.loads(config_path.read_text(encoding="utf-8"))
+            lang = cfg.get("autopilot", {}).get("language", "en")
+            set_language(lang)
+        except Exception:
+            pass  # config unreadable → keep default
+
+    # ── keyboard: arrow-key navigation in suggestions ─────────────────────────
+
+    def on_key(self, event: events.Key) -> None:
+        suggestions = self.query_one("#suggestions", OptionList)
+        if not suggestions.display:
+            return
+
+        key = event.key
+        if key == "up":
+            suggestions.action_cursor_up()
+            event.prevent_default()
+            event.stop()
+        elif key == "down":
+            suggestions.action_cursor_down()
+            event.prevent_default()
+            event.stop()
+        elif key in ("tab", "right"):
+            self._accept_suggestion(suggestions)
+            event.prevent_default()
+            event.stop()
+        elif key == "escape":
+            suggestions.display = False
+            event.prevent_default()
+            event.stop()
+        # Enter is handled by Input.Submitted; don't intercept here
+
+    def _accept_suggestion(self, suggestions: OptionList) -> None:
+        """Fill input with the highlighted suggestion and close the list."""
+        idx = suggestions.highlighted
+        if idx is not None:
+            opt = suggestions.get_option_at_index(idx)
+            cmd_input = self.query_one("#cmd-input", Input)
+            # strip args_hint, keep just "/command"
+            cmd_input.value = str(opt.id)
+            suggestions.display = False
+
+    # ── event bus polling ─────────────────────────────────────────────────────
 
     def _poll_events(self) -> None:
         table = self.query_one(FeatureTable)
         log = self.query_one(LogPanel)
-        status = self.query_one(StatusBar)
+        header = self.query_one(AppHeader)
 
         for ev in self._event_bus.drain():
             d = ev.data
             if ev.type == "phase_change":
                 phase = d.get("to_phase", "")
-                status.update_phase(phase)
+                header.update_phase(phase)
                 log.log_phase(phase)
 
             elif ev.type == "feature_update":
@@ -131,7 +186,7 @@ class AutopilotApp(App):
                     note=d.get("note", ""),
                     depends_on=d.get("depends_on", []),
                 ))
-                status.update_progress(table.count_done(), table.count_total())
+                header.update_progress(table.count_done(), table.count_total())
 
             elif ev.type == "log":
                 log.log_event(
@@ -144,22 +199,22 @@ class AutopilotApp(App):
                 log.log_commit(d.get("feature_id", ""), d.get("message", ""))
 
             elif ev.type == "backend_switch":
-                status.update_backend(d.get("to_backend", ""))
+                header.update_backend(d.get("to_backend", ""))
                 log.log_event(
                     f"Backend switch: {d.get('from_backend')} → {d.get('to_backend')}",
                     level="warning",
                 )
 
             elif ev.type == "worker_start":
-                status.update_workers(d.get("active", 0), d.get("total", 0))
+                header.update_workers(d.get("active", 0), d.get("total", 0))
 
             elif ev.type == "pipeline_done":
                 self._pipeline_running = False
                 self._quit_confirmed = False
                 phase = d.get("final_phase", "DONE")
-                status.update_phase(phase)
+                header.update_phase(phase)
                 log.log_event(
-                    f"Pipeline finished → {phase}  ({d.get('elapsed', '')})",
+                    t("pipeline_finished", phase=phase, elapsed=d.get("elapsed", "")),
                     level="success",
                 )
 
@@ -168,7 +223,7 @@ class AutopilotApp(App):
                 self._quit_confirmed = False
                 log.log_error(d.get("message", "Pipeline error"))
 
-    # ── slash command input ──────────────────────────────────────────────────
+    # ── slash command input ───────────────────────────────────────────────────
 
     @on(Input.Changed, "#cmd-input")
     def _on_input_changed(self, event: Input.Changed) -> None:
@@ -180,7 +235,9 @@ class AutopilotApp(App):
             suggestions.clear_options()
             if matches:
                 for usage, desc in matches:
-                    suggestions.add_option(Option(f"{usage}  [dim]{desc}[/dim]", id=usage.split()[0]))
+                    suggestions.add_option(
+                        Option(f"[bold]{usage}[/bold]  [dim]{desc}[/dim]", id=usage.split()[0])
+                    )
                 suggestions.display = True
             else:
                 suggestions.display = False
@@ -189,9 +246,14 @@ class AutopilotApp(App):
 
     @on(Input.Submitted, "#cmd-input")
     def _on_input_submitted(self, event: Input.Submitted) -> None:
+        suggestions = self.query_one("#suggestions", OptionList)
+        # If a suggestion is highlighted, Enter selects it instead of submitting
+        if suggestions.display and suggestions.highlighted is not None:
+            self._accept_suggestion(suggestions)
+            return
         raw = event.value.strip()
         self.query_one("#cmd-input", Input).clear()
-        self.query_one("#suggestions", OptionList).display = False
+        suggestions.display = False
         if raw:
             self._execute(raw)
 
@@ -202,21 +264,18 @@ class AutopilotApp(App):
         cmd_input.focus()
         self.query_one("#suggestions", OptionList).display = False
 
-    # ── command execution ────────────────────────────────────────────────────
+    # ── command dispatch ──────────────────────────────────────────────────────
 
     def _execute(self, raw: str) -> None:
         log = self.query_one(LogPanel)
-
         if not raw.startswith("/"):
             log.log_event(f"Unknown input: {raw!r}  (commands start with /)", level="warning")
             return
-
         cmd_name, args = parse(raw)
         cmd = lookup(cmd_name)
         if cmd is None:
             log.log_event(f"Unknown command: /{cmd_name}  — type /help", level="warning")
             return
-
         handler = getattr(self, f"_cmd_{cmd_name}", None)
         if handler:
             handler(args)
@@ -232,29 +291,41 @@ class AutopilotApp(App):
             hint = f" {cmd.args_hint}" if cmd.args_hint else ""
             log.log_event(f"[bold]/{cmd.name}{hint}[/bold]  — {cmd.description}", level="info")
 
+    def _cmd_lang(self, args: list[str]) -> None:
+        log = self.query_one(LogPanel)
+        if not args:
+            log.log_event(t("lang_current", lang=get_language()), level="info")
+            return
+        lang = args[0].lower()
+        if lang not in ("en", "zh"):
+            log.log_event(t("lang_unknown", lang=lang), level="warning")
+            return
+        set_language(lang)
+        # refresh all i18n-aware widgets
+        self.query_one(AppHeader).refresh_labels()
+        self.query_one(FeatureTable).rebuild_columns()
+        log.log_event(t("lang_switched"), level="success")
+        log.log_event(t("lang_restart_note"), level="info")
+
     def _cmd_quit(self, _args: list[str]) -> None:
         if self._pipeline_running and not self._quit_confirmed:
             self._quit_confirmed = True
-            self._log(
-                "Pipeline is running — background threads will be stopped. "
-                "Run /quit again to confirm, or wait for pipeline to finish.",
-                "warning",
-            )
+            self._log(t("quit_warning"), "warning")
             return
         self.exit()
 
-    # alias
     def _cmd_exit(self, args: list[str]) -> None:
         self._cmd_quit(args)
 
     def _cmd_check(self, _args: list[str]) -> None:
         log = self.query_one(LogPanel)
         log.log_phase("CHECK")
-        # capture widget reference in main thread; pass it to background thread
         threading.Thread(target=self._run_check, args=(log,), daemon=True).start()
 
     def _run_check(self, log: LogPanel) -> None:
-        import shutil, os
+        import os
+        import shutil
+
         autopilot_dir = self.project_path / ".autopilot"
 
         def ok(msg: str) -> None:
@@ -274,18 +345,18 @@ class AutopilotApp(App):
         if not config_path.exists():
             fail("config.toml not found"); return
 
+        ap_cfg: dict = {}
         try:
-            raw = toml.loads(config_path.read_text(encoding="utf-8"))
-            ap_cfg = raw.get("autopilot", {})
+            raw_cfg = toml.loads(config_path.read_text(encoding="utf-8"))
+            ap_cfg = raw_cfg.get("autopilot", {})
             from autopilot.pipeline.config import PipelineConfig
             PipelineConfig.from_toml(ap_cfg)
             ok("config.toml valid")
         except Exception as exc:
             fail(f"config.toml invalid: {exc}"); return
 
-        backend_name = ap_cfg.get("backend", "claude")
         cli_map = {"claude": "claude", "codex": "codex", "opencode": "opencode"}
-        for bn in [backend_name] + ap_cfg.get("parallel_backends", []):
+        for bn in [ap_cfg.get("backend", "claude")] + ap_cfg.get("parallel_backends", []):
             cli = cli_map.get(bn, bn)
             if shutil.which(cli):
                 ok(f"{bn} CLI found")
@@ -306,15 +377,16 @@ class AutopilotApp(App):
         else:
             ok("Not a git repo (auto_commit = false)")
 
-        self.call_from_thread(log.log_event, "Pre-flight done.", "success")
+        self.call_from_thread(log.log_event, t("preflight_done"), "success")
 
     def _cmd_status(self, _args: list[str]) -> None:
-        from autopilot.pipeline.context import PipelineState, FeatureList
+        from autopilot.pipeline.context import FeatureList, PipelineState
+
         log = self.query_one(LogPanel)
         autopilot_dir = self.project_path / ".autopilot"
         state_path = autopilot_dir / "state.json"
         if not state_path.exists():
-            log.log_event("No state found — run /run first", "warning"); return
+            log.log_event(t("no_state_found"), "warning"); return
         state = PipelineState.load(state_path)
         log.log_phase("STATUS")
         log.log_event(f"Phase: {state.phase.value}  retries: {state.phase_retries}", "info")
@@ -328,12 +400,13 @@ class AutopilotApp(App):
             )
 
     def _cmd_sessions(self, _args: list[str]) -> None:
-        from autopilot.sessions.reader import list_sessions, format_list
+        from autopilot.sessions.reader import list_sessions
+
         log = self.query_one(LogPanel)
         sessions_dir = self.project_path / ".autopilot" / "sessions"
         sessions = list_sessions(sessions_dir)
         if not sessions:
-            log.log_event("No sessions recorded yet.", "info"); return
+            log.log_event(t("no_sessions"), "info"); return
         log.log_phase("SESSIONS")
         for s in sessions[:10]:
             log.log_event(
@@ -344,21 +417,23 @@ class AutopilotApp(App):
 
     def _cmd_run(self, _args: list[str]) -> None:
         if self._pipeline_running:
-            self.query_one(LogPanel).log_event("Pipeline already running.", "warning"); return
+            self._log(t("pipeline_already_running"), "warning"); return
         self._start_pipeline(resume=False)
 
     def _cmd_resume(self, _args: list[str]) -> None:
         if self._pipeline_running:
-            self.query_one(LogPanel).log_event("Pipeline already running.", "warning"); return
+            self._log(t("pipeline_already_running"), "warning"); return
         self._start_pipeline(resume=True)
 
     def _cmd_redo(self, args: list[str]) -> None:
+        from autopilot.pipeline.context import FeatureList, Phase, PipelineState
+
         log = self.query_one(LogPanel)
         autopilot_dir = self.project_path / ".autopilot"
         fl_path = autopilot_dir / "feature_list.json"
         if not fl_path.exists():
-            log.log_event("No feature_list.json — run /run first", "warning"); return
-        from autopilot.pipeline.context import FeatureList, PipelineState, Phase
+            log.log_event(t("no_feature_list"), "warning"); return
+
         fl = FeatureList.load(fl_path)
         if "--failed" in args:
             targets = [f for f in fl.features if f.status == "failed"]
@@ -366,17 +441,19 @@ class AutopilotApp(App):
             fid = args[0]
             targets = [f for f in fl.features if f.id == fid]
             if not targets:
-                log.log_event(f"Feature {fid!r} not found", "error"); return
+                log.log_event(t("redo_not_found", fid=fid), "error"); return
         else:
-            log.log_event("Usage: /redo FEATURE_ID  or  /redo --failed", "warning"); return
+            log.log_event(t("redo_usage"), "warning"); return
+
         for f in targets:
             f.status = "pending"
             f.fix_retries = 0
-            log.log_event(f"↩ reset {f.id}", "info")
+            log.log_event(t("redo_reset", fid=f.id), "info")
         fl.save(fl_path)
+
         state_path = autopilot_dir / "state.json"
         if not state_path.exists():
-            log.log_event("state.json not found — run /run first", "error"); return
+            log.log_event(t("state_not_found"), "error"); return
         state = PipelineState.load(state_path)
         if state.phase not in (Phase.DEV_LOOP,):
             state.phase = Phase.DEV_LOOP
@@ -384,9 +461,9 @@ class AutopilotApp(App):
         state.current_feature_id = None
         state.active_feature_ids = []
         state.save(state_path)
-        log.log_event(f"Reset {len(targets)} feature(s). Run /resume to continue.", "success")
+        log.log_event(t("redo_done", n=len(targets)), "success")
 
-    # ── pipeline runner (background thread) ──────────────────────────────────
+    # ── pipeline runner ───────────────────────────────────────────────────────
 
     def _start_pipeline(self, resume: bool) -> None:
         log = self.query_one(LogPanel)
@@ -395,37 +472,31 @@ class AutopilotApp(App):
             log.log_event(".autopilot/ not found — run /check first", "error"); return
         self._pipeline_running = True
         self._event_bus.clear()
-        log.log_event(f"{'Resuming' if resume else 'Starting'} pipeline…", "info")
+        log.log_event(t("resuming" if resume else "starting"), "info")
         thread = threading.Thread(
-            target=self._pipeline_worker,
-            args=(resume,),
-            daemon=True,
+            target=self._pipeline_worker, args=(resume,), daemon=True
         )
         self._pipeline_thread = thread
         thread.start()
 
     def _pipeline_worker(self, resume: bool) -> None:
         try:
-            import toml
             from autopilot.backends import get_backend
-            from autopilot.pipeline.engine import PipelineEngine
             from autopilot.pipeline.config import PipelineConfig
-            from autopilot.pipeline.context import PipelineState, Phase
+            from autopilot.pipeline.context import Phase, PipelineState
+            from autopilot.pipeline.engine import PipelineEngine
 
             autopilot_dir = self.project_path / ".autopilot"
-            config = toml.loads((autopilot_dir / "config.toml").read_text())
-            ap_cfg = config.get("autopilot", {})
+            cfg = toml.loads((autopilot_dir / "config.toml").read_text())
+            ap_cfg = cfg.get("autopilot", {})
             pipeline_config = PipelineConfig.from_toml(ap_cfg)
-            _dangerous = pipeline_config.allow_dangerous_permissions
+            allow = pipeline_config.allow_dangerous_permissions
             backend = get_backend(
-                ap_cfg["backend"],
-                model=pipeline_config.model,
-                allow_dangerous=_dangerous,
+                ap_cfg["backend"], model=pipeline_config.model, allow_dangerous=allow
             )
-            parallel_backends_names: list[str] = ap_cfg.get("parallel_backends", [])
             parallel_backends = [
-                get_backend(n, model=pipeline_config.model, allow_dangerous=_dangerous)
-                for n in parallel_backends_names
+                get_backend(n, model=pipeline_config.model, allow_dangerous=allow)
+                for n in ap_cfg.get("parallel_backends", [])
             ]
 
             if resume:
@@ -458,7 +529,7 @@ class AutopilotApp(App):
     def action_show_help(self) -> None:
         self._cmd_help([])
 
-    # ── helpers ───────────────────────────────────────────────────────────────
+    # ── helper ───────────────────────────────────────────────────────────────
 
     def _log(self, message: str, level: str = "info") -> None:
         self.query_one(LogPanel).log_event(message, level)

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from rich.text import Text
 from textual.widgets import DataTable
 
+from autopilot.tui.i18n import t
+
 _STATUS_ICON: dict[str, str] = {
     "pending":   "⏳",
     "active":    "🔄",
@@ -51,9 +53,26 @@ class FeatureTable(DataTable):
         self._rows: dict[str, FeatureRow] = {}
 
     def on_mount(self) -> None:
-        self.add_columns("", "ID", "Title", "Phase / Status", "Backend", "Retries", "Note")
+        self._add_columns()
         self.cursor_type = "row"
         self.zebra_stripes = True
+
+    def _add_columns(self) -> None:
+        self.add_columns(
+            "",
+            t("col_id"),
+            t("col_title"),
+            t("col_phase"),
+            t("col_backend"),
+            t("col_retries"),
+            t("col_note"),
+        )
+
+    def rebuild_columns(self) -> None:
+        """Re-add column headers in the current i18n language. Preserves rows."""
+        self.clear(columns=True)
+        self._add_columns()
+        self._rebuild()
 
     def upsert(self, row: FeatureRow) -> None:
         """Add or update a feature row."""
