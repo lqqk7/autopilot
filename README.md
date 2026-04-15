@@ -882,15 +882,34 @@ autopilot
 
 | 命令 | 说明 |
 |------|------|
+| `/init [--backend claude\|codex\|opencode]` | 在当前目录初始化 autopilot |
 | `/run` | 从头启动流水线 |
 | `/resume` | 从上次断点继续 |
 | `/check` | 运行前环境检测 |
+| `/add TITLE [--phase X] [--depends-on IDs]` | 向 Backlog 添加新 Feature |
 | `/redo [ID\|--failed]` | 重跑指定 Feature |
 | `/status` | 显示当前流水线状态 |
-| `/sessions` | 列出所有 Session 记录 |
+| `/sessions [show SESSION_ID]` | 列出或查看 Session 记录 |
+| `/knowledge [list\|search QUERY]` | 列出或搜索知识库 |
+| `/set KEY VALUE` | 修改配置项（见下表） |
+| `/config` | 用系统编辑器打开配置文件 |
+| `/reload` | 重载配置文件 |
 | `/lang [en\|zh]` | 切换显示语言 |
 | `/help` | 显示所有命令 |
 | `/quit` | 退出 |
+
+**`/set` 可用 Key：**
+
+| Key | 示例 | 说明 |
+|-----|------|------|
+| `backend` | `/set backend codex` | 主后端 |
+| `workers` | `/set workers 4` | 最大并发 Worker 数 |
+| `parallel-backends` | `/set parallel-backends claude,codex` | 并行 Worker 后端池 |
+| `fallback-backends` | `/set fallback-backends codex` | 限速/配额耗尽时的备用后端 |
+| `log-level` | `/set log-level DEBUG` | 日志级别（DEBUG/INFO/WARNING/ERROR） |
+| `model` | `/set model claude claude-opus-4-6` | 指定后端使用的模型 |
+| `review-mode` | `/set review-mode cross` | 代码审查策略（self/cross/backend） |
+| `review-backend` | `/set review-backend codex` | 专用审查后端 |
 
 **方式 B — 经典 CLI**
 
