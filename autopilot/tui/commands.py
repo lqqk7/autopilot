@@ -71,6 +71,14 @@ COMMANDS: list[Command] = [
         usage="/lang",
         args_hint="[en | zh]",
     ),
+    Command(
+        name="set",
+        description_key="cmd_set",
+        usage="/set",
+        args_hint="KEY VALUE  (backend|workers|parallel-backends|fallback-backends|log-level|model|review-mode|review-backend)",
+    ),
+    Command(name="config",   description_key="cmd_config",   usage="/config"),
+    Command(name="reload",   description_key="cmd_reload",   usage="/reload"),
     Command(name="help",     description_key="cmd_help",     usage="/help", aliases=["?"]),
     Command(name="quit",     description_key="cmd_quit",     usage="/quit", aliases=["exit", "q"]),
 ]

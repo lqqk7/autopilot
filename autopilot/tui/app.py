@@ -105,24 +105,25 @@ class AutopilotApp(App):
 
     def on_mount(self) -> None:
         self.title = "Autopilot"
-        self._load_language_from_config()
+        self._load_config()
         self.set_interval(0.1, self._poll_events)
         self._log(t("welcome"), level="info")
         self.query_one("#cmd-input", Input).focus()
 
-    # ── language loading ──────────────────────────────────────────────────────
+    # ── config loading ────────────────────────────────────────────────────────
 
-    def _load_language_from_config(self) -> None:
-        """Read language setting from .autopilot/config.toml if it exists."""
+    def _load_config(self) -> None:
+        """Read .autopilot/config.toml and sync language + header config row."""
         config_path = self.project_path / ".autopilot" / "config.toml"
         if not config_path.exists():
             return
         try:
             cfg = toml.loads(config_path.read_text(encoding="utf-8"))
-            lang = cfg.get("autopilot", {}).get("language", "en")
-            set_language(lang)
+            ap_cfg = cfg.get("autopilot", {})
+            set_language(ap_cfg.get("language", "en"))
+            self.query_one(AppHeader).update_config(ap_cfg)
         except Exception:
-            pass  # config unreadable → keep default
+            pass  # config unreadable → keep defaults
 
     # ── keyboard: arrow-key navigation in suggestions ─────────────────────────
 
@@ -632,6 +633,124 @@ class AutopilotApp(App):
                 log.log_event(m.strip(), "info")
         else:
             log.log_event("No matches found.", "info")
+
+    # ── config commands ───────────────────────────────────────────────────────
+
+    def _cmd_set(self, args: list[str]) -> None:  # noqa: C901
+        log = self.query_one(LogPanel)
+        config_path = self.project_path / ".autopilot" / "config.toml"
+        if len(args) < 2:
+            log.log_event(t("set_usage"), "warning"); return
+        if not config_path.exists():
+            log.log_event(t("config_not_init"), "error"); return
+
+        key = args[0].lower()
+        value_parts = args[1:]
+
+        try:
+            cfg = toml.loads(config_path.read_text(encoding="utf-8"))
+            ap = cfg.setdefault("autopilot", {})
+
+            if key == "backend":
+                backend = value_parts[0]
+                if backend not in ("claude", "codex", "opencode"):
+                    log.log_event(t("set_bad_backend", backend=backend), "warning"); return
+                ap["backend"] = backend
+
+            elif key == "workers":
+                try:
+                    n = int(value_parts[0])
+                    if n < 1: raise ValueError()
+                except ValueError:
+                    log.log_event(t("set_bad_workers"), "warning"); return
+                ap["max_parallel"] = n
+
+            elif key == "parallel-backends":
+                backends = [b.strip() for b in value_parts[0].split(",") if b.strip()]
+                invalid = [b for b in backends if b not in ("claude", "codex", "opencode")]
+                if invalid:
+                    log.log_event(t("set_bad_backend", backend=",".join(invalid)), "warning"); return
+                ap["parallel_backends"] = backends
+
+            elif key == "fallback-backends":
+                backends = [b.strip() for b in value_parts[0].split(",") if b.strip()]
+                invalid = [b for b in backends if b not in ("claude", "codex", "opencode")]
+                if invalid:
+                    log.log_event(t("set_bad_backend", backend=",".join(invalid)), "warning"); return
+                ap["fallback_backends"] = backends
+
+            elif key == "log-level":
+                level = value_parts[0].upper()
+                if level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+                    log.log_event(t("set_bad_loglevel"), "warning"); return
+                ap["log_level"] = level
+
+            elif key == "model":
+                # /set model BACKEND MODEL  (backend required for clarity)
+                if len(value_parts) < 2:
+                    log.log_event("Usage: /set model BACKEND MODEL  e.g. /set model claude claude-opus-4-6", "warning"); return
+                backend_name, model_name = value_parts[0], value_parts[1]
+                if backend_name not in ("claude", "codex", "opencode"):
+                    log.log_event(t("set_bad_backend", backend=backend_name), "warning"); return
+                ap["model"] = model_name
+                log.log_event(t("set_ok", key=f"model ({backend_name})", value=model_name), "success")
+                config_path.write_text(toml.dumps(cfg), encoding="utf-8")
+                self.query_one(AppHeader).update_config(ap)
+                return
+
+            elif key == "review-mode":
+                mode = value_parts[0].lower()
+                if mode not in ("self", "cross", "backend"):
+                    log.log_event(t("set_bad_review_mode"), "warning"); return
+                ap.setdefault("review", {})["mode"] = mode
+
+            elif key == "review-backend":
+                backend = value_parts[0]
+                if backend not in ("claude", "codex", "opencode"):
+                    log.log_event(t("set_bad_backend", backend=backend), "warning"); return
+                review = ap.setdefault("review", {})
+                review["backend"] = backend
+                review["mode"] = "backend"
+                key = "review-backend (mode auto → backend)"
+
+            else:
+                log.log_event(t("set_unknown_key", key=key), "warning"); return
+
+            config_path.write_text(toml.dumps(cfg), encoding="utf-8")
+            self.query_one(AppHeader).update_config(ap)
+            log.log_event(t("set_ok", key=key, value=value_parts[0]), "success")
+
+        except Exception as exc:
+            log.log_error(t("set_config_error", exc=exc))
+
+    def _cmd_config(self, _args: list[str]) -> None:
+        import subprocess
+        log = self.query_one(LogPanel)
+        config_path = self.project_path / ".autopilot" / "config.toml"
+        if not config_path.exists():
+            log.log_event(t("config_not_init"), "error"); return
+        try:
+            subprocess.Popen(["open", str(config_path)])
+            log.log_event(t("config_opening"), "info")
+        except Exception as exc:
+            log.log_error(t("config_open_error", exc=exc))
+
+    def _cmd_reload(self, _args: list[str]) -> None:
+        log = self.query_one(LogPanel)
+        config_path = self.project_path / ".autopilot" / "config.toml"
+        if not config_path.exists():
+            log.log_event(t("config_not_init"), "error"); return
+        try:
+            cfg = toml.loads(config_path.read_text(encoding="utf-8"))
+            ap_cfg = cfg.get("autopilot", {})
+            set_language(ap_cfg.get("language", "en"))
+            header = self.query_one(AppHeader)
+            header.update_config(ap_cfg)
+            header.refresh_labels()
+            self.query_one(FeatureTable).rebuild_columns()
+            log.log_event(t("reload_ok"), "success")
+        except Exception as exc:
+            log.log_error(t("reload_error", exc=exc))
 
     # ── pipeline runner ───────────────────────────────────────────────────────
 

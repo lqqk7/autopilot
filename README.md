@@ -222,9 +222,25 @@ Opens a full-screen interactive terminal dashboard. Type `/run` to start the pip
 | `/status` | Show pipeline state |
 | `/sessions [show SESSION_ID]` | List or inspect recorded sessions |
 | `/knowledge [list\|search QUERY]` | List or search the knowledge base |
+| `/set KEY VALUE` | Modify a config value (see below) |
+| `/config` | Open config file in system editor |
+| `/reload` | Reload config file from disk |
 | `/lang [en\|zh]` | Switch display language |
 | `/help` | Show all commands |
 | `/quit` | Exit |
+
+**`/set` keys:**
+
+| Key | Example | Description |
+|-----|---------|-------------|
+| `backend` | `/set backend codex` | Primary backend |
+| `workers` | `/set workers 4` | Max parallel feature workers |
+| `parallel-backends` | `/set parallel-backends claude,codex` | Parallel worker pool |
+| `fallback-backends` | `/set fallback-backends codex` | Fallback on rate-limit |
+| `log-level` | `/set log-level DEBUG` | Log verbosity (DEBUG/INFO/WARNING/ERROR) |
+| `model` | `/set model claude claude-opus-4-6` | Model for a backend |
+| `review-mode` | `/set review-mode cross` | Review strategy (self/cross/backend) |
+| `review-backend` | `/set review-backend codex` | Dedicated review backend |
 
 **Option B — Classic CLI**
 
