@@ -662,6 +662,151 @@ class AutopilotApp(App):
         else:
             log.log_event("No matches found.", "info")
 
+    # ── v0.4–v0.9 commands ────────────────────────────────────────────────────
+
+    def _cmd_missions(self, _args: list[str]) -> None:
+        """Show current mission and per-feature state (v0.4)."""
+        from autopilot.pipeline.context import Mission, MissionStore
+
+        log = self.query_one(LogPanel)
+        autopilot_dir = self.project_path / ".autopilot"
+        store = MissionStore(autopilot_dir)
+        mid = store.active_mission_id()
+        if not mid:
+            log.log_event(t("missions_none"), "warning")
+            return
+
+        mission_path = store._mission_dir(mid) / "mission.json"
+        mission = Mission.load(mission_path)
+        log.log_phase("MISSIONS")
+        log.log_event(t("missions_header", title=mission.title, status=mission.status, mid=mid), "info")
+
+        feat_dir = store._mission_dir(mid) / "features"
+        if not feat_dir.exists() or not list(feat_dir.glob("*.json")):
+            log.log_event(t("missions_no_features"), "info")
+            return
+
+        from autopilot.pipeline.context import FeatureState
+        for path in sorted(feat_dir.glob("*.json")):
+            try:
+                fs = FeatureState.load(path)
+                log.log_event(
+                    t("missions_feat_row",
+                      fid=fs.id,
+                      status=fs.status,
+                      retry=fs.retry_count,
+                      backend=fs.last_backend or "—",
+                      phase=fs.phase),
+                    "success" if fs.status == "completed" else "warning" if fs.status == "failed" else "info",
+                )
+            except Exception:
+                pass
+
+    def _cmd_handoff(self, args: list[str]) -> None:
+        """Show latest handoff or a specific handoff (v0.9)."""
+        from autopilot.handoff.loader import HandoffLoader
+
+        log = self.query_one(LogPanel)
+        autopilot_dir = self.project_path / ".autopilot"
+        loader = HandoffLoader(autopilot_dir)
+
+        if args and args[0].lower() != "latest":
+            handoff = loader.load_by_id(args[0])
+        else:
+            handoff = loader.latest()
+
+        if not handoff:
+            log.log_event(t("handoff_none"), "warning")
+            return
+
+        log.log_phase("HANDOFF")
+        log.log_event(t("handoff_header", hid=handoff.handoff_id, session=handoff.from_session), "info")
+        for line in handoff.to_prompt_block().splitlines():
+            if line.strip():
+                log.log_event(line, "info")
+
+    def _cmd_principles(self, args: list[str]) -> None:
+        """List or add principles (v0.7)."""
+        import json as _json
+
+        from autopilot.principles.loader import PrinciplesLoader
+
+        log = self.query_one(LogPanel)
+        autopilot_dir = self.project_path / ".autopilot"
+        sub = args[0].lower() if args else "list"
+
+        if sub == "add":
+            # /principles add PHASE rule text...
+            if len(args) < 3:
+                log.log_event(t("principles_add_usage"), "warning")
+                return
+            phase = args[1].upper()
+            rule = " ".join(args[2:])
+            principles_path = autopilot_dir / "principles.jsonl"
+            try:
+                entry = {"phase": phase, "rule": rule, "severity": "warn"}
+                with principles_path.open("a", encoding="utf-8") as f:
+                    f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+                log.log_event(t("principles_added", severity="warn", phase=phase, rule=rule), "success")
+            except Exception as exc:
+                log.log_error(t("principles_add_error", exc=exc))
+            return
+
+        # list — show by phase (all phases)
+        loader = PrinciplesLoader(autopilot_dir)
+        log.log_phase("PRINCIPLES")
+        from autopilot.pipeline.context import Phase
+        all_phases = [p.value for p in Phase if p not in (Phase.INIT, Phase.HUMAN_PAUSE, Phase.DONE, Phase.DEV_LOOP)]
+        found_any = False
+        for phase in all_phases:
+            rules = loader.load_for_phase(phase)
+            if not rules:
+                continue
+            found_any = True
+            log.log_event(t("principles_header", phase=phase), "info")
+            for p in rules:
+                icon = "❌" if p.severity == "error" else "⚠️" if p.severity == "warn" else "ℹ️"
+                log.log_event(f"  {icon}  {p.rule}", "info")
+        if not found_any:
+            log.log_event(t("principles_none"), "info")
+
+    def _cmd_skills(self, args: list[str]) -> None:
+        """List built-in skills or match skills to a query (v0.6)."""
+        from autopilot.skills.registry import SkillRegistry
+
+        log = self.query_one(LogPanel)
+        reg = SkillRegistry()
+        sub = args[0].lower() if args else "list"
+
+        if sub == "match" or (args and sub not in ("list",)):
+            query = " ".join(args[1:]) if sub == "match" else " ".join(args)
+            if not query:
+                log.log_event("Usage: /skills match FEATURE_DESCRIPTION", "warning")
+                return
+            matches = reg.match(query)
+            log.log_phase(f"SKILLS MATCH: {query}")
+            if not matches:
+                log.log_event(t("skills_no_match", query=query), "info")
+                return
+            log.log_event(t("skills_match_header", query=query), "info")
+            for s in matches:
+                log.log_event(t("skills_row", name=s.name, cat=s.category, desc=s.description or s.prompt_hint[:60]), "info")
+                if s.prompt_hint:
+                    for line in s.prompt_hint.splitlines()[:2]:
+                        log.log_event(f"    {line}", "info")
+        else:
+            skills = reg.all_skills()
+            log.log_phase("SKILLS")
+            log.log_event(t("skills_list_header", n=len(skills)), "info")
+            for s in skills:
+                phases = f"  phases: {','.join(s.trigger.phases)}" if s.trigger.phases else ""
+                kw = ", ".join(s.trigger.keywords[:4])
+                log.log_event(
+                    t("skills_row", name=s.name, cat=s.category, desc=s.description or "—"),
+                    "info",
+                )
+                log.log_event(f"    keywords: {kw}{phases}", "info")
+
     # ── config commands ───────────────────────────────────────────────────────
 
     def _cmd_set(self, args: list[str]) -> None:  # noqa: C901

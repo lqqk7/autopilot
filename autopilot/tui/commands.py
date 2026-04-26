@@ -79,6 +79,26 @@ COMMANDS: list[Command] = [
     ),
     Command(name="config",   description_key="cmd_config",   usage="/config"),
     Command(name="reload",   description_key="cmd_reload",   usage="/reload"),
+    # ── v0.4–v0.9 commands ────────────────────────────────────────────────────
+    Command(name="missions",   description_key="cmd_missions",   usage="/missions"),
+    Command(
+        name="handoff",
+        description_key="cmd_handoff",
+        usage="/handoff",
+        args_hint="[latest | ID]",
+    ),
+    Command(
+        name="principles",
+        description_key="cmd_principles",
+        usage="/principles",
+        args_hint="[list | add PHASE RULE]",
+    ),
+    Command(
+        name="skills",
+        description_key="cmd_skills",
+        usage="/skills",
+        args_hint="[list | match QUERY]",
+    ),
     Command(name="help",     description_key="cmd_help",     usage="/help", aliases=["?"]),
     Command(name="quit",     description_key="cmd_quit",     usage="/quit", aliases=["exit", "q"]),
 ]

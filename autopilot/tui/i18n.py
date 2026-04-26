@@ -28,6 +28,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "cmd_set":       "Modify a config value (backend, workers, model, …)",
         "cmd_config":    "Open config file in system editor",
         "cmd_reload":    "Reload config file from disk",
+        "cmd_missions":  "Show current mission and per-feature state (v0.4)",
+        "cmd_handoff":   "Show the latest session handoff packet (v0.9)",
+        "cmd_principles": "List or add behavioral rules for this project (v0.7)",
+        "cmd_skills":    "List built-in skills or match skills to a feature description (v0.6)",
         "cmd_help":      "Show all available commands",
         "cmd_quit":      "Exit Autopilot",
         "cmd_lang":      "Switch display language  (en / zh)",
@@ -85,6 +89,25 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang_restart_note": "(column headers update on restart)",
         "quit_warning":    "Pipeline is running — background threads will be stopped. Run /quit again to confirm.",
         "pipeline_finished": "Pipeline finished → {phase}  ({elapsed})",
+        # missions command
+        "missions_none":       "No active mission found — run /run first",
+        "missions_header":     "Mission: {title}  [{status}]  (id: {mid})",
+        "missions_feat_row":   "  {fid}  {status:<12}  retry:{retry}  backend:{backend}  {phase}",
+        "missions_no_features": "  (no feature state files yet)",
+        # handoff command
+        "handoff_none":        "No handoff found — run /run or /resume first",
+        "handoff_header":      "Handoff: {hid}  (from: {session})",
+        # principles command
+        "principles_none":     "No principles defined. Create .autopilot/principles.jsonl to add rules.",
+        "principles_header":   "Principles for phase {phase}:",
+        "principles_add_usage": "Usage: /principles add PHASE RULE\nExample: /principles add CODE No eval() or exec()",
+        "principles_added":    "✓ Rule added to principles.jsonl  [{severity}] [{phase}] {rule}",
+        "principles_add_error": "Failed to add principle: {exc}",
+        # skills command
+        "skills_list_header":  "Built-in Skills ({n} total):",
+        "skills_match_header": "Skills matching {query!r}:",
+        "skills_no_match":     "No skills match {query!r}",
+        "skills_row":          "  {name}  [{cat}]  — {desc}",
     },
     "zh": {
         # startup
@@ -102,6 +125,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "cmd_set":       "修改配置项（backend、workers、model 等）",
         "cmd_config":    "用系统编辑器打开配置文件",
         "cmd_reload":    "重载配置文件",
+        "cmd_missions":  "查看当前 Mission 和 Feature 级状态（v0.4）",
+        "cmd_handoff":   "查看最新 Session Handoff 内容（v0.9）",
+        "cmd_principles": "查看或添加项目行为规则（v0.7）",
+        "cmd_skills":    "查看内置 Skills 或匹配 Feature 描述（v0.6）",
         "cmd_help":      "显示所有可用命令",
         "cmd_quit":      "退出 Autopilot",
         "cmd_lang":      "切换显示语言（en / zh）",
@@ -159,6 +186,25 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang_restart_note": "（列标题将在重启后更新）",
         "quit_warning":    "流水线正在运行，后台线程将被终止。再次执行 /quit 确认退出。",
         "pipeline_finished": "流水线完成 → {phase}  ({elapsed})",
+        # missions command
+        "missions_none":       "未找到活跃 Mission — 请先执行 /run",
+        "missions_header":     "Mission：{title}  [{status}]  (id: {mid})",
+        "missions_feat_row":   "  {fid}  {status:<12}  重试:{retry}  后端:{backend}  {phase}",
+        "missions_no_features": "  （暂无 Feature 状态文件）",
+        # handoff command
+        "handoff_none":        "未找到 Handoff — 请先执行 /run 或 /resume",
+        "handoff_header":      "Handoff：{hid}  (来自 Session：{session})",
+        # principles command
+        "principles_none":     "暂无行为规则。创建 .autopilot/principles.jsonl 开始添加。",
+        "principles_header":   "Phase {phase} 的 Principles：",
+        "principles_add_usage": "用法：/principles add PHASE RULE\n示例：/principles add CODE 禁止使用 eval() 或 exec()",
+        "principles_added":    "✓ 规则已写入 principles.jsonl  [{severity}] [{phase}] {rule}",
+        "principles_add_error": "添加规则失败：{exc}",
+        # skills command
+        "skills_list_header":  "内置 Skills（共 {n} 个）：",
+        "skills_match_header": "匹配 {query!r} 的 Skills：",
+        "skills_no_match":     "未找到匹配 {query!r} 的 Skill",
+        "skills_row":          "  {name}  [{cat}]  — {desc}",
     },
 }
 
