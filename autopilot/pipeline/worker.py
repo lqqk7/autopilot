@@ -13,7 +13,9 @@ from autopilot.knowledge.local import LocalKnowledge
 from autopilot.pipeline.config import PipelineConfig
 from autopilot.pipeline.context import AgentOutput, Feature, Phase
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, handle_error
+from autopilot.principles.loader import PrinciplesLoader
 from autopilot.sessions.recorder import SessionRecorder
+from autopilot.skills.runner import SkillRunner
 from autopilot.tui.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ class FeatureWorker:
         review_backend: BackendBase | None = None,
         recorder: SessionRecorder | None = None,
         event_bus: EventBus | None = None,
+        global_knowledge_md: str = "",
     ) -> None:
         self.feature = feature
         self.backend = backend
@@ -68,8 +71,11 @@ class FeatureWorker:
         self._review_backend = review_backend
         self._recorder = recorder
         self._event_bus: EventBus | None = event_bus
+        self._global_knowledge_md = global_knowledge_md
         self._loader = AgentLoader()
         self._compactor = KnowledgeCompactor()
+        self._skill_runner = SkillRunner()
+        self._principles = PrinciplesLoader(autopilot_dir)
         self.artifacts: list[str] = []
         self.fix_retries = 0
         self.current_phase: Phase = Phase.CODE
@@ -139,6 +145,8 @@ class FeatureWorker:
         knowledge_md = kb.read_all()
         if self._compactor.needs_compaction(knowledge_md):
             knowledge_md = self._compactor.compact(knowledge_md, active, self.autopilot_dir)
+        if self._global_knowledge_md:
+            knowledge_md = "\n\n".join(filter(None, [knowledge_md, self._global_knowledge_md]))
 
         ctx = RunContext(
             project_path=self.project_path,
@@ -148,6 +156,14 @@ class FeatureWorker:
         )
         agent_name = _PHASE_TO_AGENT[phase]
         prompt = self._loader.build_system_prompt(agent_name, ctx)
+        # v0.6: append applicable skill hints
+        skill_hints = self._skill_runner.build_hints(self.feature.title, phase.value)
+        if skill_hints:
+            prompt = prompt + "\n\n" + skill_hints
+        # v0.7: append principles for this phase
+        principles_block = self._principles.build_injection(phase.value)
+        if principles_block:
+            prompt = prompt + "\n\n" + principles_block
         timeout = self._cfg.timeout_for(phase)
         local_retry = 0
 

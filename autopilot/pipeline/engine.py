@@ -17,12 +17,16 @@ from autopilot.agents.loader import AgentLoader
 from autopilot.backends import get_backend
 from autopilot.backends.base import BackendBase, BackendResult, ErrorType, RunContext
 from autopilot.knowledge.compactor import KnowledgeCompactor
+from autopilot.knowledge.global_knowledge import GlobalKnowledge
 from autopilot.knowledge.local import LocalKnowledge
 from autopilot.notifications.telegram import TelegramNotifier
 from autopilot.pipeline.config import PipelineConfig
-from autopilot.pipeline.context import AgentOutput, Feature, FeatureList, Phase, PipelineState, RunResult
+from autopilot.pipeline.context import AgentOutput, Feature, FeatureList, FeatureState, MissionStore, Phase, PipelineState, RunResult
 from autopilot.pipeline.phases import DELIVERY_DOCS, ExitCondition, PhaseRunner
 from autopilot.pipeline.retry import LOCAL_RETRY_TYPES, exponential_backoff, handle_error
+from autopilot.handoff.loader import HandoffLoader
+from autopilot.handoff.writer import HandoffWriter
+from autopilot.principles.loader import PrinciplesLoader
 from autopilot.pipeline.worker import FeatureWorker
 from autopilot.sessions.recorder import SessionRecorder
 from autopilot.tui.event_bus import EventBus
@@ -80,6 +84,12 @@ class PipelineEngine:
         self._git_lock = threading.Lock()
         self._recorder: SessionRecorder | None = None
         self._event_bus: EventBus | None = event_bus
+        self._global_kb = GlobalKnowledge()
+        self._project_keywords: list[str] = [project_path.name]
+        self._principles = PrinciplesLoader(self.autopilot_dir)
+        self._session_id = f"session-{int(time.monotonic() * 1000) % 100000:05d}"
+        self._handoff_writer = HandoffWriter(self.autopilot_dir, session_id=self._session_id)
+        self._handoff_loader = HandoffLoader(self.autopilot_dir)
 
     def state_path(self) -> Path:
         return self.autopilot_dir / "state.json"
@@ -171,11 +181,14 @@ class PipelineEngine:
             fl = FeatureList.load(self.autopilot_dir / "feature_list.json")
             feature = next((f for f in fl.features if f.id == state.current_feature_id), None)
 
+        local_knowledge = kb.read_all()
+        global_knowledge = self._global_kb.read_relevant(self._project_keywords)
+        combined_knowledge = "\n\n".join(filter(None, [local_knowledge, global_knowledge]))
         ctx = RunContext(
             project_path=self.project_path,
             docs_path=self.autopilot_dir / "docs",
             feature=feature,
-            knowledge_md=kb.read_all(),
+            knowledge_md=combined_knowledge,
         )
 
         agent_name = _PHASE_TO_AGENT.get(state.phase)
@@ -187,6 +200,12 @@ class PipelineEngine:
             self._compaction_count += 1
 
         prompt = self._loader.build_system_prompt(agent_name, ctx)
+        # v0.7: inject principles for this phase
+        principles_block = self._principles.build_injection(state.phase.value)
+        if principles_block:
+            prompt = prompt + "\n\n" + principles_block
+        # v0.9: prepend handoff context if resuming from a prior session
+        prompt = self._handoff_loader.inject_into_prompt(prompt)
         local_retry = 0
 
         phase_timeout = self._cfg.timeout_for(state.phase)
@@ -440,6 +459,8 @@ class PipelineEngine:
         if state.phase == Phase.DONE and self.notifier:
             count = sum(1 for _ in (self.autopilot_dir / "knowledge").rglob("*.md"))
             self.notifier.send_done(total_seconds=elapsed, knowledge_count=count)
+        # v0.9: write handoff on exit (pause or done)
+        self._write_handoff(state)
         self._write_run_result(state)
         logger.info("Pipeline ended: %s (%.0fs)", state.phase, elapsed)
 
@@ -452,6 +473,17 @@ class PipelineEngine:
             return
 
         fl = FeatureList.load(fl_path)
+
+        # v0.4: ensure a mission exists for this dev loop
+        mission_store = MissionStore(self.autopilot_dir)
+        docs_path = self.autopilot_dir / "docs"
+        overview_md = docs_path / "00-overview" / "project-overview.md"
+        mission_title = "Development Mission"
+        if overview_md.exists():
+            first_line = overview_md.read_text(encoding="utf-8").splitlines()[0].lstrip("# ").strip()
+            if first_line:
+                mission_title = first_line
+        mission = mission_store.get_or_create_mission(mission_title)
 
         # Build runtime sets for DAG-aware scheduling
         completed_ids: set[str] = {f.id for f in fl.features if f.status == "completed"}
@@ -532,7 +564,7 @@ class PipelineEngine:
         # DAG-aware parallel scheduler: only submit features whose deps are all done.
         try:
             with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
-                def run_worker(feature: Feature) -> tuple[str, bool, list[str]]:
+                def run_worker(feature: Feature) -> tuple[str, bool, list[str], int]:
                     write_idx, backend = next_backend()
                     review_backend = resolve_review_backend(write_idx)
                     logger.info(
@@ -541,7 +573,9 @@ class PipelineEngine:
                         type(backend).__name__,
                         type(review_backend).__name__ if review_backend else "self",
                     )
-                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend, recorder=self._recorder, event_bus=self._event_bus)
+                    mission_store.mark_feature_started(mission.id, feature.id, feature.depends_on)
+                    global_kb_md = self._global_kb.read_relevant(self._project_keywords)
+                    worker = FeatureWorker(feature, backend, self.autopilot_dir, self.project_path, self._cfg, review_backend, recorder=self._recorder, event_bus=self._event_bus, global_knowledge_md=global_kb_md)
                     with workers_lock:
                         active_workers.append(worker)
                     try:
@@ -549,7 +583,7 @@ class PipelineEngine:
                     finally:
                         with workers_lock:
                             active_workers.remove(worker)
-                    return feature.id, ok, worker.artifacts
+                    return feature.id, ok, worker.artifacts, worker.fix_retries
 
                 # active_futures: future → feature_id; waiting: fid → feature (blocked by deps)
                 active_futures: dict[Future[tuple[str, bool, list[str]]], str] = {}
@@ -590,10 +624,10 @@ class PipelineEngine:
                     done = next(as_completed(active_futures))
                     fid = active_futures.pop(done)
                     try:
-                        _, ok, arts = done.result()
+                        _, ok, arts, fix_retries = done.result()
                     except Exception as exc:
                         logger.error("[%s] Worker raised unexpected exception: %s", fid, exc)
-                        ok, arts = False, []
+                        ok, arts, fix_retries = False, [], 0
 
                     results.append((fid, ok, arts))
                     self._collected_artifacts.extend(arts)
@@ -620,6 +654,17 @@ class PipelineEngine:
                         if completed_feature is not None:
                             self._auto_commit_feature(completed_feature)
                     fl.save(fl_path)
+                    # v0.4: update per-feature state and save checkpoint
+                    mission_store.mark_feature_done(
+                        mission.id, fid, ok,
+                        last_backend=self._backend_name,
+                        retry_count=fix_retries,
+                    )
+                    all_fs = {
+                        f.id: mission_store.load_feature_state(mission.id, f.id) or FeatureState(id=f.id, mission_id=mission.id)
+                        for f in fl.features
+                    }
+                    mission_store.save_checkpoint(state, all_fs)
                     done_count = sum(1 for f in fl.features if f.status == "completed")
                     self._update_progress_section(fl, done_count)
                     if progress:
@@ -650,6 +695,9 @@ class PipelineEngine:
         state.active_feature_ids = []
         state.current_feature_id = None
         self.save_state(state)
+        # v0.4: complete mission if all features succeeded
+        if fl.all_done():
+            mission_store.complete_mission(mission.id)
 
     def _auto_commit_feature(self, feature: Feature) -> None:
         """Git-commit the working tree after a feature passes REVIEW."""
@@ -684,6 +732,36 @@ class PipelineEngine:
         if self._parallel_backends:
             return self._parallel_backends
         return [self.backend]
+
+    def _write_handoff(self, state: PipelineState, handoff_type: str = "agent-to-agent") -> None:
+        """Write a handoff packet capturing current pipeline context."""
+        try:
+            fl = self._load_feature_list()
+            completed = [f.id for f in fl.features if f.status == "completed"] if fl else []
+            pending = [f.id for f in fl.features if f.status == "pending"] if fl else []
+            mission_store = MissionStore(self.autopilot_dir)
+            mid = mission_store.active_mission_id() or "unknown"
+            mission_title = "Development Mission"
+            if mid != "unknown":
+                m_path = mission_store._mission_dir(mid) / "mission.json"
+                from autopilot.pipeline.context import Mission
+                if m_path.exists():
+                    mission_title = Mission.load(m_path).title
+            mission_status = "paused" if state.phase == Phase.HUMAN_PAUSE else (
+                "done" if state.phase == Phase.DONE else "in_progress"
+            )
+            self._handoff_writer.write(
+                mission_id=mid,
+                mission_title=mission_title,
+                mission_status=mission_status,
+                current_feature=state.current_feature_id,
+                completed_features=completed,
+                pending_features=pending,
+                open_issues=[state.pause_reason] if state.pause_reason else [],
+                handoff_type=handoff_type,
+            )
+        except Exception as exc:
+            logger.warning("Failed to write handoff: %s", exc)
 
     def _on_phase_passed(self, state: PipelineState, start_time: float) -> None:
         next_phase = self.advance(state)
