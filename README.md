@@ -253,6 +253,10 @@ No need to hunt through terminal stdout — the full guidance is right in front 
 | `/config` | Open config file in system editor |
 | `/reload` | Reload config file from disk |
 | `/lang [en\|zh]` | Switch display language |
+| `/missions` | Show current mission and per-feature state (v0.4) |
+| `/handoff [latest\|ID]` | Show the latest session handoff packet (v0.9) |
+| `/principles [list\|add PHASE RULE]` | List or add behavioral rules for this project (v0.7) |
+| `/skills [list\|match QUERY]` | List built-in skills or match to a feature description (v0.6) |
 | `/help` | Show all commands |
 | `/quit` | Exit |
 
@@ -960,6 +964,10 @@ autopilot
 | `/config` | 用系统编辑器打开配置文件 |
 | `/reload` | 重载配置文件 |
 | `/lang [en\|zh]` | 切换显示语言 |
+| `/missions` | 查看当前 Mission 和 Feature 级状态（v0.4） |
+| `/handoff [latest\|ID]` | 查看最新 Session Handoff 内容（v0.9） |
+| `/principles [list\|add PHASE RULE]` | 查看或添加项目行为规则（v0.7） |
+| `/skills [list\|match QUERY]` | 查看内置 Skills 或匹配 Feature 描述（v0.6） |
 | `/help` | 显示所有命令 |
 | `/quit` | 退出 |
 
