@@ -1,3 +1,14 @@
+> [!WARNING]
+> **⚠️ 该项目已停止维护 / This project is no longer maintained**
+>
+> Autopilot CLI 正在被重构为带有 GUI 界面的全新版本，本仓库不再接受新功能开发，仅做存档保留。
+>
+> Autopilot CLI is being rebuilt as a brand new version with a native GUI. This repository is archived and will no longer receive updates.
+>
+> 👉 **新版本 / New version：[Lumen](https://github.com/lqqk7/Lumen)**
+
+---
+
 <div align="center">
 
 # 🤖 Autopilot
